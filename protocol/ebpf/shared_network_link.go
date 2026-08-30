@@ -33,40 +33,42 @@ func attachSharedTC(
 			_ = interfaceLock.Close()
 		}
 	}()
-	restoreRouteLocalnet := false
+	attachment := &sharedTCAttachment{
+		interfaceName:  link.Attrs().Name,
+		interfaceIndex: link.Attrs().Index,
+		interfaceLock:  interfaceLock,
+	}
+	rollback := func(startErr error) (*sharedTCAttachment, error) {
+		closeInterfaceLock = false
+		cleanupErr := detachSharedTCAttachment(attachment)
+		if cleanupErr != nil {
+			return attachment, E.Errors(startErr, E.Cause(cleanupErr, "roll back shared-network TC attachment"))
+		}
+		return nil, startErr
+	}
 	if enableIPv4 {
-		restoreRouteLocalnet, err = enableSharedRouteLocalnet(link.Attrs().Name)
+		attachment.restoreRouteLocalnet, err = enableSharedRouteLocalnet(link.Attrs().Name)
 		if err != nil {
-			return nil, err
+			return rollback(err)
 		}
 	}
 	if priority == defaultSharedNetworkTCPriority {
-		tcx, supported, tcxErr := backend.TryAttachTCX(link.Attrs().Index)
+		var supported bool
+		var tcxErr error
+		attachment.tcx, supported, tcxErr = backend.TryAttachTCX(link.Attrs().Index)
 		if tcxErr != nil {
-			if restoreRouteLocalnet {
-				_ = restoreSharedRouteLocalnet(link.Attrs().Name)
-			}
-			return nil, tcxErr
+			return rollback(tcxErr)
 		}
 		if supported {
-			attachment := &sharedTCAttachment{
-				interfaceName:        link.Attrs().Name,
-				interfaceIndex:       link.Attrs().Index,
-				interfaceLock:        interfaceLock,
-				tcx:                  tcx,
-				restoreRouteLocalnet: restoreRouteLocalnet,
-			}
 			closeInterfaceLock = false
 			return attachment, nil
 		}
 	}
-	if err := ensureClsact(link); err != nil {
-		if restoreRouteLocalnet {
-			_ = restoreSharedRouteLocalnet(link.Attrs().Name)
-		}
-		return nil, err
+	attachment.removeClsact, err = ensureClsact(link)
+	if err != nil {
+		return rollback(err)
 	}
-	egress, _, err := attachSharedTCFilter(
+	attachment.egress, _, err = attachSharedTCFilter(
 		link,
 		netlink.HANDLE_MIN_EGRESS,
 		backend.EgressProgramFD(),
@@ -77,12 +79,9 @@ func attachSharedTC(
 		true,
 	)
 	if err != nil {
-		if restoreRouteLocalnet {
-			_ = restoreSharedRouteLocalnet(link.Attrs().Name)
-		}
-		return nil, err
+		return rollback(err)
 	}
-	ingress, _, err := attachSharedTCFilter(
+	attachment.ingress, _, err = attachSharedTCFilter(
 		link,
 		netlink.HANDLE_MIN_INGRESS,
 		backend.IngressProgramFD(),
@@ -93,19 +92,7 @@ func attachSharedTC(
 		true,
 	)
 	if err != nil {
-		var routeErr error
-		if restoreRouteLocalnet {
-			routeErr = restoreSharedRouteLocalnet(link.Attrs().Name)
-		}
-		return nil, E.Errors(err, detachSharedTCFilter(egress), routeErr)
-	}
-	attachment := &sharedTCAttachment{
-		interfaceName:        link.Attrs().Name,
-		interfaceIndex:       link.Attrs().Index,
-		interfaceLock:        interfaceLock,
-		ingress:              ingress,
-		egress:               egress,
-		restoreRouteLocalnet: restoreRouteLocalnet,
+		return rollback(err)
 	}
 	closeInterfaceLock = false
 	return attachment, nil
@@ -225,7 +212,7 @@ func attachSharedTCFilter(
 	filters, err = netlink.FilterList(link, parent)
 	if err != nil {
 		if rollbackErr := detachSharedTCFilter(filter); rollbackErr != nil {
-			return nil, false, E.Errors(err, E.Cause(rollbackErr, "roll back unverified TC filter"))
+			return filter, true, E.Errors(err, E.Cause(rollbackErr, "roll back unverified TC filter"))
 		}
 		return nil, false, err
 	}
@@ -245,7 +232,7 @@ func attachSharedTCFilter(
 	}
 	notVisibleErr := E.New("new shared-network TC filter is not visible on ", link.Attrs().Name)
 	if rollbackErr := detachSharedTCFilter(filter); rollbackErr != nil {
-		return nil, false, E.Errors(notVisibleErr, E.Cause(rollbackErr, "roll back unverified TC filter"))
+		return filter, true, E.Errors(notVisibleErr, E.Cause(rollbackErr, "roll back unverified TC filter"))
 	}
 	return nil, false, notVisibleErr
 }
@@ -256,10 +243,14 @@ func repairSharedTC(
 	backend *ECommon.SharedNetworkBackend,
 	priority uint16,
 ) (bool, error) {
-	if err := ensureClsact(link); err != nil {
+	createdClsact, err := ensureClsact(link)
+	if err != nil {
 		return false, err
 	}
-	repaired := false
+	repaired := createdClsact
+	if createdClsact {
+		attachment.removeClsact = true
+	}
 	egress, egressRepaired, err := attachSharedTCFilter(
 		link,
 		netlink.HANDLE_MIN_EGRESS,
@@ -267,13 +258,15 @@ func repairSharedTC(
 		"sb_share_out",
 		sharedEgressFilterHandle,
 		priority,
-		attachment.egress.Id,
+		sharedTCFilterProgramID(attachment.egress),
 		false,
 	)
+	if egress != nil {
+		attachment.egress = egress
+	}
 	if err != nil {
 		return false, err
 	}
-	attachment.egress = egress
 	repaired = repaired || egressRepaired
 	ingress, ingressRepaired, err := attachSharedTCFilter(
 		link,
@@ -282,13 +275,15 @@ func repairSharedTC(
 		"sb_share_in",
 		sharedIngressFilterHandle,
 		priority,
-		attachment.ingress.Id,
+		sharedTCFilterProgramID(attachment.ingress),
 		false,
 	)
+	if ingress != nil {
+		attachment.ingress = ingress
+	}
 	if err != nil {
 		return repaired, err
 	}
-	attachment.ingress = ingress
 	repaired = repaired || ingressRepaired
 	return repaired, nil
 }
@@ -343,6 +338,13 @@ func sharedTCFilterMatches(
 		(programID == 0 || filter.Id == programID)
 }
 
+func sharedTCFilterProgramID(filter *netlink.BpfFilter) int {
+	if filter == nil {
+		return 0
+	}
+	return filter.Id
+}
+
 func detachSharedTCFilter(filter *netlink.BpfFilter) error {
 	if filter == nil {
 		return nil
@@ -354,14 +356,14 @@ func detachSharedTCFilter(filter *netlink.BpfFilter) error {
 	return err
 }
 
-func ensureClsact(link netlink.Link) error {
+func ensureClsact(link netlink.Link) (bool, error) {
 	qdiscs, err := netlink.QdiscList(link)
 	if err != nil {
-		return err
+		return false, err
 	}
 	for _, qdisc := range qdiscs {
 		if qdisc.Type() == "clsact" {
-			return nil
+			return false, nil
 		}
 	}
 	qdisc := &netlink.GenericQdisc{
@@ -372,7 +374,60 @@ func ensureClsact(link netlink.Link) error {
 		},
 		QdiscType: "clsact",
 	}
-	if err = netlink.QdiscAdd(qdisc); err != nil && !errors.Is(err, unix.EEXIST) {
+	if err = netlink.QdiscAdd(qdisc); errors.Is(err, unix.EEXIST) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func releaseSharedClsact(interfaceIndex int) error {
+	link, err := netlink.LinkByIndex(interfaceIndex)
+	if isSharedNetworkLinkNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, parent := range []uint32{netlink.HANDLE_MIN_INGRESS, netlink.HANDLE_MIN_EGRESS} {
+		filters, filterErr := netlink.FilterList(link, parent)
+		if isSharedNetworkLinkNotFound(filterErr) {
+			return nil
+		}
+		if filterErr != nil {
+			return filterErr
+		}
+		for _, filter := range filters {
+			bpfFilter, isBPF := filter.(*netlink.BpfFilter)
+			if !isBPF {
+				continue
+			}
+			handle := filter.Attrs().Handle
+			if (bpfFilter.Name == "sb_share_in" && handle == netlink.MakeHandle(0, sharedIngressFilterHandle)) ||
+				(bpfFilter.Name == "sb_share_out" && handle == netlink.MakeHandle(0, sharedEgressFilterHandle)) {
+				return E.New("sing-box-owned TC filter remained on ", link.Attrs().Name)
+			}
+		}
+		if len(filters) > 0 {
+			return nil
+		}
+	}
+	qdiscs, err := netlink.QdiscList(link)
+	if isSharedNetworkLinkNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, qdisc := range qdiscs {
+		if qdisc.Type() != "clsact" {
+			continue
+		}
+		err = netlink.QdiscDel(qdisc)
+		if errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ENODEV) || errors.Is(err, unix.ESRCH) {
+			return nil
+		}
 		return err
 	}
 	return nil

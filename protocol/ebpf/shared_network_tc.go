@@ -61,7 +61,9 @@ type sharedTCAttachment struct {
 	tcx                  *ECommon.SharedNetworkTCXAttachment
 	ingress              *netlink.BpfFilter
 	egress               *netlink.BpfFilter
+	detachFilter         func(*netlink.BpfFilter) error
 	restoreRouteLocalnet bool
+	removeClsact         bool
 }
 
 func (m *sharedTCManager) Start() error {
@@ -206,10 +208,12 @@ func (m *sharedTCManager) reconcile() (err error) {
 			continue
 		}
 		attachment, attachErr := attachSharedTC(link, m.backend, m.enableIPv4, m.priority)
+		if attachment != nil {
+			m.attachments[interfaceName] = attachment
+		}
 		if attachErr != nil {
 			return E.Cause(attachErr, "attach eBPF shared-network to ", interfaceName)
 		}
-		m.attachments[interfaceName] = attachment
 	}
 	err = m.updateEnabledLocked(len(m.attachments) > 0)
 	if err == nil && len(m.attachments) > 0 && !m.readyNotified {
@@ -272,21 +276,44 @@ func (m *sharedTCManager) detachLocked(attachment *sharedTCAttachment) error {
 			m.refreshWarnings.warn(m.logger, "purge eBPF shared-network state for ", attachment.interfaceName, ": ", err)
 		}
 	}
-	detachErr := E.Errors(
-		attachment.tcx.Close(),
-		detachSharedTCFilter(attachment.ingress),
-		detachSharedTCFilter(attachment.egress),
-	)
-	if attachment.restoreRouteLocalnet {
+	return detachSharedTCAttachment(attachment)
+}
+
+func detachSharedTCAttachment(attachment *sharedTCAttachment) error {
+	tcxErr := attachment.tcx.Close()
+	if tcxErr == nil {
+		attachment.tcx = nil
+	}
+	detachFilter := detachSharedTCFilter
+	if attachment.detachFilter != nil {
+		detachFilter = attachment.detachFilter
+	}
+	ingressErr := detachFilter(attachment.ingress)
+	if ingressErr == nil {
+		attachment.ingress = nil
+	}
+	egressErr := detachFilter(attachment.egress)
+	if egressErr == nil {
+		attachment.egress = nil
+	}
+	detachErr := E.Errors(tcxErr, ingressErr, egressErr)
+	if detachErr == nil && attachment.removeClsact {
+		if err := releaseSharedClsact(attachment.interfaceIndex); err != nil {
+			detachErr = err
+		} else {
+			attachment.removeClsact = false
+		}
+	}
+	if detachErr == nil && attachment.restoreRouteLocalnet {
 		if err := restoreSharedRouteLocalnet(attachment.interfaceName); err != nil {
-			detachErr = E.Errors(detachErr, err)
+			detachErr = err
 		} else {
 			attachment.restoreRouteLocalnet = false
 		}
 	}
-	if attachment.interfaceLock != nil {
+	if detachErr == nil && attachment.interfaceLock != nil {
 		if err := attachment.interfaceLock.Close(); err != nil {
-			detachErr = E.Errors(detachErr, err)
+			detachErr = err
 		} else {
 			attachment.interfaceLock = nil
 		}

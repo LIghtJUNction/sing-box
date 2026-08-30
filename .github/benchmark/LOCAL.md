@@ -152,19 +152,26 @@ development it is:
 adb shell /data/adb/ksu/bin/box stop
 ```
 
-Deploy the two binaries and the harness into its dedicated temporary directory:
+Stage the two binaries and harness on shared storage, then copy them into a
+dedicated root-owned executable directory. Do not use a system temp directory:
 
 ```sh
-BENCHMARK_ROOT=/data/local/tmp/sing-box-inbound-benchmark
-adb shell "mkdir -p $BENCHMARK_ROOT"
-adb push build/sing-box "$BENCHMARK_ROOT/sing-box"
+STAGING_ROOT=/sdcard/Download/MagicNet/sing-box-inbound-benchmark
+BENCHMARK_ROOT=/data/adb/sing-box-inbound-benchmark
+adb shell "mkdir -p $STAGING_ROOT"
+adb push build/sing-box "$STAGING_ROOT/sing-box"
 adb push build/inbound-benchmark/interception-bench-android-arm64 \
-  "$BENCHMARK_ROOT/interception-bench"
+  "$STAGING_ROOT/interception-bench"
 adb push .github/benchmark/android-inbound-benchmark.sh \
-  "$BENCHMARK_ROOT/android-inbound-benchmark.sh"
-adb shell "chmod 0755 $BENCHMARK_ROOT/sing-box \
-  $BENCHMARK_ROOT/interception-bench \
-  $BENCHMARK_ROOT/android-inbound-benchmark.sh"
+  "$STAGING_ROOT/android-inbound-benchmark.sh"
+adb shell "su -c 'mkdir -p $BENCHMARK_ROOT && \
+  cp $STAGING_ROOT/sing-box $BENCHMARK_ROOT/sing-box && \
+  cp $STAGING_ROOT/interception-bench $BENCHMARK_ROOT/interception-bench && \
+  cp $STAGING_ROOT/android-inbound-benchmark.sh $BENCHMARK_ROOT/android-inbound-benchmark.sh && \
+  chmod 0755 $BENCHMARK_ROOT/sing-box \
+    $BENCHMARK_ROOT/interception-bench \
+    $BENCHMARK_ROOT/android-inbound-benchmark.sh'"
+adb shell "rm -rf $STAGING_ROOT"
 ```
 
 ### Run the comparison
@@ -228,8 +235,16 @@ Pull the complete directory before cleanup and run the same summarizer used by
 GitHub Actions:
 
 ```sh
+STAGING_ROOT=/sdcard/Download/MagicNet/sing-box-inbound-benchmark
 RESULT=build/inbound-benchmark/android-$(date +%Y%m%d-%H%M%S)
-adb pull "$BENCHMARK_ROOT" "$RESULT"
+adb shell "mkdir -p $STAGING_ROOT"
+adb shell "su -c 'tar -czf $STAGING_ROOT/results.tar.gz \
+  -C /data/adb sing-box-inbound-benchmark'"
+mkdir -p "$RESULT"
+adb pull "$STAGING_ROOT/results.tar.gz" "$RESULT/results.tar.gz"
+tar -xzf "$RESULT/results.tar.gz" -C "$RESULT" --strip-components=1
+rm -f "$RESULT/results.tar.gz"
+adb shell "rm -rf $STAGING_ROOT"
 python3 .github/benchmark/summarize.py "$RESULT" > "$RESULT/summary.md"
 sed -n '1,120p' "$RESULT/summary.md"
 (cd "$(dirname "$RESULT")" && zip -qr "$(basename "$RESULT").zip" "$(basename "$RESULT")")
@@ -254,12 +269,14 @@ Remove the namespace processes and cgroup after pulling results, then restart
 the installed service:
 
 ```sh
-adb shell "$BENCHMARK_ROOT/android-inbound-benchmark.sh cleanup"
+adb shell "su -c '$BENCHMARK_ROOT/android-inbound-benchmark.sh cleanup'"
+adb shell "su -c 'rm -rf $BENCHMARK_ROOT'"
 adb shell /data/adb/ksu/bin/box start
 ```
 
-`cleanup` intentionally leaves `$BENCHMARK_ROOT` and its evidence intact. After
-confirming the pull, that exact temporary directory may be removed manually.
+Only remove `$BENCHMARK_ROOT` after confirming that the evidence archive was
+pulled successfully. The staging directory is removed after both deployment and
+collection.
 
 The namespace shared-eBPF result measures its forwarding data plane and is
 comparable with the automated Linux topology. A real hotspot validation still

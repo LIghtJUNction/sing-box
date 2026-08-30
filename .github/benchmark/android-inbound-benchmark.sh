@@ -2,7 +2,7 @@
 
 set -eu
 
-ROOT=${BENCHMARK_ROOT:-/data/local/tmp/sing-box-inbound-benchmark}
+ROOT=${BENCHMARK_ROOT:-/data/adb/sing-box-inbound-benchmark}
 DURATION=${BENCHMARK_DURATION:-5s}
 WARMUP=${BENCHMARK_WARMUP:-3s}
 CONCURRENCY=${BENCHMARK_CONCURRENCY:-8}
@@ -91,7 +91,7 @@ record_environment() {
     echo "variants=direct,ebpf-local,ebpf-shared,redirect,tproxy,tun-mixed,tun-mixed-auto-redirect"
     echo "scenarios=tcp-short,tcp-upload,tcp-download,udp-pps,udp-unconnected-pps,udp-churn"
     echo "topology=android-three-network-namespaces"
-    echo "sing_box=$($ROOT/sing-box version 2>&1 | head -n 1)"
+    echo "sing_box=$("$ROOT/sing-box" version 2>&1 | head -n 1)"
     uname -a
   } > "$ROOT/environment/run.txt"
 }

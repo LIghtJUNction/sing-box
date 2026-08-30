@@ -318,6 +318,13 @@ func TestSharedNetworkDataPathIntegration(t *testing.T) {
 			t.Fatalf("ip %s: %v: %s", strings.Join(arguments, " "), err, output)
 		}
 	}
+	runTC := func(arguments ...string) {
+		t.Helper()
+		command := exec.Command("tc", arguments...)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("tc %s: %v: %s", strings.Join(arguments, " "), err, output)
+		}
+	}
 	_ = exec.Command("ip", "netns", "del", namespace).Run()
 	_ = exec.Command("ip", "link", "del", hostLink).Run()
 	t.Cleanup(func() {
@@ -414,6 +421,7 @@ func TestSharedNetworkDataPathIntegration(t *testing.T) {
 		logger:      discardInterfaceLogger{},
 		interfaces:  []string{"sbe-not-found", hostLink},
 		enableIPv4:  true,
+		priority:    defaultSharedNetworkTCPriority + 1,
 		attachments: make(map[string]*sharedTCAttachment),
 	}
 	if err = manager.reconcile(); err != nil {
@@ -440,7 +448,7 @@ func TestSharedNetworkDataPathIntegration(t *testing.T) {
 		if repairedAttachment.ingress.Id != ingressProgramID {
 			t.Fatalf("shared-network ingress program changed during repair: %d != %d", repairedAttachment.ingress.Id, ingressProgramID)
 		}
-		runIP("qdisc", "del", "dev", hostLink, "clsact")
+		runTC("qdisc", "del", "dev", hostLink, "clsact")
 		if err = manager.reconcile(); err != nil {
 			t.Fatal(err)
 		}
@@ -700,29 +708,37 @@ func TestSharedNetworkDataPathIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mapFullAccept := make(chan error, 1)
-	go func() {
-		_ = tcpListener.SetDeadline(time.Now().Add(2 * time.Second))
-		conn, acceptErr := tcpListener.AcceptTCP()
+	mapFullRejected := false
+	for attempt := 0; attempt <= int(backend.MapCapacity().Proxy); attempt++ {
+		mapFullAccept := make(chan error, 1)
+		go func() {
+			_ = tcpListener.SetDeadline(time.Now().Add(2 * time.Second))
+			conn, acceptErr := tcpListener.AcceptTCP()
+			if acceptErr == nil {
+				_ = conn.Close()
+			}
+			mapFullAccept <- acceptErr
+		}()
+		mapFullContext, mapFullCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		mapFullCommand := exec.CommandContext(
+			mapFullContext,
+			"ip", "netns", "exec", namespace,
+			"nc", "-w", "1", fmt.Sprintf("9.9.9.%d", 10+attempt), "19090",
+		)
+		_ = mapFullCommand.Run()
+		acceptErr := <-mapFullAccept
+		mapFullCancel()
 		if acceptErr == nil {
-			_ = conn.Close()
+			continue
 		}
-		mapFullAccept <- acceptErr
-	}()
-	mapFullContext, mapFullCancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer mapFullCancel()
-	mapFullCommand := exec.CommandContext(
-		mapFullContext,
-		"ip", "netns", "exec", namespace,
-		"nc", "-w", "1", "9.9.9.9", "19090",
-	)
-	_ = mapFullCommand.Run()
-	acceptErr := <-mapFullAccept
-	if acceptErr == nil {
-		t.Fatal("shared-network listener accepted a flow after its maps reached capacity")
-	}
-	if networkError, isNetworkError := acceptErr.(net.Error); !isNetworkError || !networkError.Timeout() {
+		if networkError, isNetworkError := acceptErr.(net.Error); isNetworkError && networkError.Timeout() {
+			mapFullRejected = true
+			break
+		}
 		t.Fatalf("wait for map-capacity rejection: %v", acceptErr)
+	}
+	if !mapFullRejected {
+		t.Fatal("shared-network maps accepted more flows than their configured capacity")
 	}
 	time.Sleep(time.Millisecond)
 	sweepResult, err := backend.SweepOrphanedFlows(time.Nanosecond, sharedFlowFallbackScanBudget)
@@ -779,6 +795,104 @@ func TestSharedNetworkDataPathIntegration(t *testing.T) {
 	if !manager.enabled || len(manager.attachments) != 1 {
 		t.Fatalf("TC state was not restored after interface recreation: enabled=%v attachments=%d", manager.enabled, len(manager.attachments))
 	}
+	if err = manager.Close(); err != nil {
+		t.Fatal("close shared-network TC manager: ", err)
+	}
+	recreatedLink, err := netlink.LinkByName(hostLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	qdiscs, err := netlink.QdiscList(recreatedLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, qdisc := range qdiscs {
+		if qdisc.Type() == "clsact" {
+			t.Fatal("sing-box-owned clsact qdisc remained after manager close")
+		}
+	}
+
+	runTC("qdisc", "add", "dev", hostLink, "clsact")
+	runTC("filter", "add", "dev", hostLink, "ingress", "protocol", "all", "pref", "100", "matchall", "action", "pass")
+	externalClsactManager := &sharedTCManager{
+		backend:     backend,
+		logger:      discardInterfaceLogger{},
+		interfaces:  []string{hostLink},
+		enableIPv4:  true,
+		priority:    defaultSharedNetworkTCPriority + 1,
+		attachments: make(map[string]*sharedTCAttachment),
+	}
+	if err = externalClsactManager.reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	if err = externalClsactManager.Close(); err != nil {
+		t.Fatal("close manager using a pre-existing clsact qdisc: ", err)
+	}
+	qdiscs, err = netlink.QdiscList(recreatedLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundClsact := false
+	for _, qdisc := range qdiscs {
+		foundClsact = foundClsact || qdisc.Type() == "clsact"
+	}
+	if !foundClsact {
+		t.Fatal("manager removed a pre-existing clsact qdisc")
+	}
+	externalFilters, err := netlink.FilterList(recreatedLink, netlink.HANDLE_MIN_INGRESS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundExternalFilter := false
+	for _, filter := range externalFilters {
+		foundExternalFilter = foundExternalFilter || filter.Attrs().Priority == 100
+	}
+	if !foundExternalFilter {
+		t.Fatal("manager removed a pre-existing TC filter")
+	}
+
+	conflictingFilter := &netlink.BpfFilter{
+		FilterAttrs: netlink.FilterAttrs{
+			LinkIndex: recreatedLink.Attrs().Index,
+			Parent:    netlink.HANDLE_MIN_INGRESS,
+			Handle:    netlink.MakeHandle(0, sharedIngressFilterHandle),
+			Priority:  defaultSharedNetworkTCPriority + 1,
+			Protocol:  unix.ETH_P_ALL,
+		},
+		Fd:           backend.IngressProgramFD(),
+		Name:         "external_conflict",
+		DirectAction: true,
+	}
+	if err = netlink.FilterAdd(conflictingFilter); err != nil {
+		t.Fatal(err)
+	}
+	conflictManager := &sharedTCManager{
+		backend:     backend,
+		logger:      discardInterfaceLogger{},
+		interfaces:  []string{hostLink},
+		enableIPv4:  true,
+		priority:    defaultSharedNetworkTCPriority + 1,
+		attachments: make(map[string]*sharedTCAttachment),
+	}
+	if err = conflictManager.reconcile(); err == nil {
+		t.Fatal("expected the conflicting TC filter to reject shared-network attachment")
+	}
+	if len(conflictManager.attachments) != 0 {
+		t.Fatal("successful rollback retained a partial TC attachment")
+	}
+	egressFilters, err := netlink.FilterList(recreatedLink, netlink.HANDLE_MIN_EGRESS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, filter := range egressFilters {
+		if bpfFilter, isBPF := filter.(*netlink.BpfFilter); isBPF && bpfFilter.Name == "sb_share_out" {
+			t.Fatal("attachment rollback left the egress BPF filter installed")
+		}
+	}
+	if err = netlink.FilterDel(conflictingFilter); err != nil {
+		t.Fatal(err)
+	}
+	runTC("qdisc", "del", "dev", hostLink, "clsact")
 }
 
 type discardInterfaceLogger struct{}

@@ -12,22 +12,27 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   verifier:
     name: Linux kernel verifier
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: 1.26.5
+          go-version: 1.26.7
 
       - name: Setup Android NDK
         id: setup-ndk
-        uses: nttld/setup-ndk@v1
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1
         with:
           ndk-version: r29
 
@@ -39,7 +44,21 @@ jobs:
           make -C common/ebpf check
           go clean -cache
 
-      - name: Load program matrix
+      - name: Run eBPF unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          forbidden_android_temp='/data/local'"/tmp"
+          if grep -R -F "$forbidden_android_temp" .github/benchmark; then
+            echo "::error::Android benchmark must stage through shared storage"
+            exit 1
+          fi
+          grep -Fq "ROOT=\${BENCHMARK_ROOT:-/data/adb/sing-box-inbound-benchmark}" \
+            .github/benchmark/android-inbound-benchmark.sh
+          go test -race -count=1 -tags with_ebpf \
+            ./common/ebpf ./protocol/ebpf ./include ./option
+
+      - name: Run eBPF integration matrix
         shell: bash
         run: |
           set -euo pipefail
@@ -49,15 +68,28 @@ jobs:
           sudo env \
             "PATH=$PATH" \
             SING_BOX_EBPF_INTEGRATION=1 \
+            SING_BOX_EBPF_STRESS=1 \
             SING_BOX_EBPF_INTEGRATION_CGROUP="$cgroup_path" \
-            go test -v -count=1 \
-              -run 'Test(CgroupBackendProgramLoad|SharedNetwork(SharedMap|Standalone)ProgramLoad|SharedNetworkProgramRun)Integration' \
+            go test -v -count=1 -timeout 15m \
+              -run 'Integration$' \
               -tags with_ebpf,ebpf_integration \
               ./common/ebpf 2>&1 | tee -a verifier.log
 
+      - name: Run shared-network data path
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo env \
+            "PATH=$PATH" \
+            SING_BOX_EBPF_SHARED_INTEGRATION=1 \
+            go test -v -count=1 -timeout 15m \
+              -run 'Integration$' \
+              -tags with_ebpf,ebpf_integration \
+              ./protocol/ebpf 2>&1 | tee -a verifier.log
+
       - name: Upload verifier log
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ebpf-verifier
           path: verifier.log

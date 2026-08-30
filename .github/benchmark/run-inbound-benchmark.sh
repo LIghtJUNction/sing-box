@@ -907,12 +907,11 @@ for repetition in $(seq 1 "$repetitions"); do
   done < <(printf '%s\n' "${benchmark_variants[@]}" | shuf)
 done
 
-for variant in ebpf-local; do
-  if [[ -n ${seen_variants[$variant]:-} ]]; then
-    echo "validating $variant interception against direct leakage" >&2
-    run_local_leak_check "$variant"
-  fi
-done
+variant=ebpf-local
+if [[ -n ${seen_variants[$variant]:-} ]]; then
+  echo "validating $variant interception against direct leakage" >&2
+  run_local_leak_check "$variant"
+fi
 
 for variant in ebpf-shared redirect tproxy; do
   if [[ -n ${seen_variants[$variant]:-} ]]; then

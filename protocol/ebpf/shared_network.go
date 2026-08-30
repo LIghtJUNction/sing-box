@@ -201,9 +201,10 @@ func (s *sharedNetwork) Close() error {
 	}
 	s.lifecycleAccess.Lock()
 	defer s.lifecycleAccess.Unlock()
-	var closeErr error
 	if s.tcManager != nil {
-		closeErr = s.tcManager.Close()
+		if err := s.tcManager.Close(); err != nil {
+			return err
+		}
 		s.tcManager = nil
 	}
 	s.stopFlowJanitor()
@@ -220,7 +221,7 @@ func (s *sharedNetwork) Close() error {
 	}
 	listenerErr := s.closeListeners()
 	s.udpNat.Purge()
-	return E.Errors(closeErr, backendErr, listenerErr)
+	return E.Errors(backendErr, listenerErr)
 }
 
 func (s *sharedNetwork) closeListeners() error {

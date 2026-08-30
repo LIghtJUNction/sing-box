@@ -154,7 +154,6 @@ func (i *Inbound) closeResources() error {
 	debugErr := i.stopDebug()
 	i.stopTCPRedirectJanitor()
 	i.stopBypassRuleSets()
-	i.closeSocketProtection()
 	backend := i.takeCgroupBackend()
 	var sharedErr error
 	if i.sharedNetwork != nil {
@@ -179,6 +178,7 @@ func (i *Inbound) closeResources() error {
 			return backendErr
 		}
 	}
+	i.closeSocketProtection()
 	listenerErr := i.closeListeners()
 	i.udpNat.Purge()
 	return E.Errors(sharedErr, backendErr, listenerErr, debugErr, i.removeLocalRoutes())

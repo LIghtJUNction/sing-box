@@ -180,6 +180,15 @@ func TestValidateSharedNetworkLink(t *testing.T) {
 	}
 }
 
+func TestSharedTCFilterProgramID(t *testing.T) {
+	if programID := sharedTCFilterProgramID(nil); programID != 0 {
+		t.Fatalf("unexpected nil TC filter program ID: %d", programID)
+	}
+	if programID := sharedTCFilterProgramID(&netlink.BpfFilter{Id: 42}); programID != 42 {
+		t.Fatalf("unexpected TC filter program ID: %d", programID)
+	}
+}
+
 func TestSharedTCFilterMatches(t *testing.T) {
 	filter := &netlink.BpfFilter{
 		FilterAttrs: netlink.FilterAttrs{
@@ -286,6 +295,76 @@ func TestIsSharedNetworkLinkNotFound(t *testing.T) {
 	if isSharedNetworkLinkNotFound(unix.EPERM) {
 		t.Fatal("expected a permission error to be retained")
 	}
+}
+
+func newRetryingTestTCAttachment(
+	t *testing.T,
+	interfaceName string,
+	interfaceIndex int,
+) (*sharedTCAttachment, *int) {
+	t.Helper()
+	interfaceLock, err := acquireSharedTCInterfaceLock(interfaceName, interfaceIndex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detachCalls := new(int)
+	attachment := &sharedTCAttachment{
+		interfaceLock: interfaceLock,
+		ingress:       &netlink.BpfFilter{},
+		detachFilter: func(filter *netlink.BpfFilter) error {
+			if filter == nil {
+				return nil
+			}
+			*detachCalls++
+			if *detachCalls == 1 {
+				return os.ErrPermission
+			}
+			return nil
+		},
+	}
+	t.Cleanup(func() {
+		if attachment.interfaceLock != nil {
+			_ = attachment.interfaceLock.Close()
+		}
+	})
+	return attachment, detachCalls
+}
+
+func TestSharedNetworkCloseRetriesTCManager(t *testing.T) {
+	const (
+		interfaceName  = "sing-box-test-retry"
+		interfaceIndex = 424242
+	)
+	attachment, detachCalls := newRetryingTestTCAttachment(t, interfaceName, interfaceIndex)
+	manager := &sharedTCManager{
+		attachments: map[string]*sharedTCAttachment{interfaceName: attachment},
+	}
+	shared := newSharedNetwork(&Inbound{udpTimeout: time.Minute}, option.EBPFSharedOptions{})
+	shared.tcManager = manager
+	if err := shared.Close(); err == nil {
+		t.Fatal("expected the first TC manager close to fail")
+	}
+	if shared.tcManager != manager || shared.IsClosed() {
+		t.Fatal("shared-network discarded a TC manager that still required cleanup")
+	}
+	if competingLock, lockErr := acquireSharedTCInterfaceLock(interfaceName, interfaceIndex); lockErr == nil {
+		_ = competingLock.Close()
+		t.Fatal("shared-network released the interface lock after failed cleanup")
+	}
+	if err := shared.Close(); err != nil {
+		t.Fatal("retry TC manager close: ", err)
+	}
+	if *detachCalls != 2 {
+		t.Fatalf("unexpected TC detach attempts: %d", *detachCalls)
+	}
+	if shared.tcManager != nil || !shared.IsClosed() {
+		t.Fatal("shared-network remained open after successful cleanup retry")
+	}
+	retryLock, err := acquireSharedTCInterfaceLock(interfaceName, interfaceIndex)
+	if err != nil {
+		t.Fatal("interface lock remained held after successful cleanup: ", err)
+	}
+	_ = retryLock.Close()
 }
 
 func TestSharedNetworkCloseListeners(t *testing.T) {
