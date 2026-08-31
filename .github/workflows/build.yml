@@ -51,6 +51,9 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
           fetch-depth: 0
+      - name: Fetch upstream tags
+        if: github.event_name != 'workflow_dispatch'
+        run: git fetch --force --tags https://github.com/SagerNet/sing-box.git
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
