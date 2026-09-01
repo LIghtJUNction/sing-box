@@ -207,16 +207,18 @@ same as the `hijack-dns` routing action.
 
 #### shared.interface
 
-==Required in shared or hybrid mode==
+==Required in shared mode; optional in hybrid mode==
 
-Downstream interfaces where client packets enter TC ingress. Interfaces may
-appear or disappear after startup; sing-box attaches and detaches automatically.
-Shared-network eBPF programs and maps are loaded only when a configured
-interface first becomes available, then kept loaded across temporary interface
-loss to avoid repeated verifier and map setup work.
-Do not select `lo`, an upstream interface, or a layer-3-only interface. When a
-hotspot and Wi-Fi upstream share an interface name, restrict clients with
-source CIDR or MAC policy.
+Downstream interfaces where client packets enter TC ingress. An empty hybrid
+list keeps the local cgroup path active while the shared path waits; a later
+configuration reload may supply confirmed downstream interfaces without first
+downgrading the inbound to local mode. Interfaces may appear or disappear after
+startup; sing-box attaches and detaches automatically. Shared-network eBPF
+programs and maps are loaded only when a configured interface first becomes
+available, then kept loaded across temporary interface loss to avoid repeated
+verifier and map setup work. Do not select `lo`, an upstream interface, or a
+layer-3-only interface. When a hotspot and Wi-Fi upstream share an interface
+name, restrict clients with source CIDR or MAC policy.
 
 #### shared.ipv6
 

@@ -189,13 +189,15 @@ DoH/DoT，也不等同于路由规则中的 `hijack-dns` 动作。
 
 #### shared.interface
 
-==shared 或 hybrid 模式必填==
+==shared 模式必填；hybrid 模式可为空==
 
-客户端报文进入 TC ingress 的下游接口。接口可在启动后出现或消失，sing-box
-会自动挂载和卸载。shared eBPF 程序和 map 只在首个已配置接口出现时加载；
-接口暂时消失后仍保留 backend，避免重复执行 verifier 和 map 初始化。不要选择
-`lo`、上游接口或仅支持三层报文的接口。热点与
-Wi-Fi 上游共用接口名时，应使用源 CIDR 或 MAC 筛选客户端流量。
+客户端报文进入 TC ingress 的下游接口。hybrid 使用空列表时，local cgroup
+路径继续工作，shared 路径保持等待；后续配置重载可补入已确认的下游接口，
+无需先把入站降级为 local。接口可在启动后出现或消失，sing-box 会自动挂载和
+卸载。shared eBPF 程序和 map 只在首个已配置接口出现时加载；接口暂时消失后
+仍保留 backend，避免重复执行 verifier 和 map 初始化。不要选择 `lo`、上游接口
+或仅支持三层报文的接口。热点与 Wi-Fi 上游共用接口名时，应使用源 CIDR 或 MAC
+筛选客户端流量。
 
 #### shared.ipv6
 

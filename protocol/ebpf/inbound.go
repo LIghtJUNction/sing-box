@@ -112,7 +112,7 @@ type Inbound struct {
 var _ adapter.InterfaceUpdateListener = (*Inbound)(nil)
 
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.EBPFInboundOptions) (adapter.Inbound, error) {
-	_, cgroupEnabled, sharedNetworkEnabled, err := normalizeMode(options.Mode)
+	mode, cgroupEnabled, sharedNetworkEnabled, err := normalizeMode(options.Mode)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +147,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	}
 	sharedNetworkOptions := option.EBPFSharedOptions{}
 	if sharedNetworkEnabled {
-		sharedNetworkOptions, err = normalizeSharedNetworkOptions(options.Shared)
+		sharedNetworkOptions, err = normalizeSharedNetworkOptions(options.Shared, mode == ebpfModeHybrid)
 		if err != nil {
 			return nil, err
 		}

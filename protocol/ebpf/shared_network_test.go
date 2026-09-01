@@ -68,7 +68,7 @@ func TestNormalizeSharedNetworkOptions(t *testing.T) {
 			netip.MustParsePrefix("192.168.43.0/24"),
 			netip.MustParsePrefix("::ffff:192.168.44.1/120"),
 		},
-	})
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,12 +98,47 @@ func TestNormalizeSharedNetworkOptionsKeepsTCPriority(t *testing.T) {
 		Advanced: option.EBPFSharedAdvancedOptions{
 			TCPriority: 42,
 		},
-	})
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if options.Advanced.TCPriority != 42 {
 		t.Fatalf("unexpected TC priority: %d", options.Advanced.TCPriority)
+	}
+}
+
+func TestSharedTCManagerKeepsEmptyInterfacesPending(t *testing.T) {
+	prepared := false
+	manager := &sharedTCManager{
+		prepareBackend: func() (*ECommon.SharedNetworkBackend, error) {
+			prepared = true
+			return nil, unix.EINVAL
+		},
+	}
+	if err := manager.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if prepared {
+		t.Fatal("shared backend was prepared without a confirmed interface")
+	}
+	if manager.backend != nil || manager.isEnabled() {
+		t.Fatal("empty shared interface list did not remain pending")
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNormalizeSharedNetworkOptionsAllowsEmptyHybridInterface(t *testing.T) {
+	options, err := normalizeSharedNetworkOptions(option.EBPFSharedOptions{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(options.Interface) != 0 {
+		t.Fatalf("unexpected interfaces: %v", options.Interface)
+	}
+	if options.Advanced.TCPriority != defaultSharedNetworkTCPriority {
+		t.Fatalf("unexpected default TC priority: %d", options.Advanced.TCPriority)
 	}
 }
 
@@ -116,7 +151,7 @@ func TestNormalizeSharedNetworkOptionsRejectsInvalid(t *testing.T) {
 	} {
 		_, err := normalizeSharedNetworkOptions(option.EBPFSharedOptions{
 			Interface: interfaces,
-		})
+		}, false)
 		if err == nil {
 			t.Fatalf("expected interfaces to be rejected: %v", interfaces)
 		}
@@ -124,7 +159,7 @@ func TestNormalizeSharedNetworkOptionsRejectsInvalid(t *testing.T) {
 	_, err := normalizeSharedNetworkOptions(option.EBPFSharedOptions{
 		Interface:         []string{"ap0"},
 		IncludeSourceCIDR: []netip.Prefix{{}},
-	})
+	}, false)
 	if err == nil {
 		t.Fatal("expected an invalid source CIDR to be rejected")
 	}

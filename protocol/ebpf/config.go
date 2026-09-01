@@ -141,8 +141,8 @@ func validateSharedOptions(enabled bool, options option.EBPFSharedOptions) error
 	return nil
 }
 
-func normalizeSharedNetworkOptions(options option.EBPFSharedOptions) (option.EBPFSharedOptions, error) {
-	if len(options.Interface) == 0 {
+func normalizeSharedNetworkOptions(options option.EBPFSharedOptions, allowEmptyInterface bool) (option.EBPFSharedOptions, error) {
+	if len(options.Interface) == 0 && !allowEmptyInterface {
 		return option.EBPFSharedOptions{}, E.New("shared.interface must not be empty")
 	}
 	if options.Advanced.TCPriority == 0 {
