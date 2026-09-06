@@ -22,6 +22,8 @@ import (
 
 const (
 	sharedNetworkHealthCheckInterval = 2 * time.Minute
+	sharedNetworkRetryInterval       = time.Second
+	sharedNetworkMaxRetryInterval    = 10 * time.Second
 	// Run before Android tethering offload (IPv6 priority 2, IPv4 priority 3).
 	defaultSharedNetworkTCPriority = 1
 	sharedIngressFilterHandle      = 0x5342
@@ -81,24 +83,35 @@ func (m *sharedTCManager) Start() error {
 	if m.networkMonitor != nil {
 		m.networkCallback = m.networkMonitor.RegisterCallback(m.Wake)
 	}
-	go m.loop(ctx)
+	go m.loop(ctx, m.reconcile)
 	return nil
 }
 
-func (m *sharedTCManager) loop(ctx context.Context) {
+func (m *sharedTCManager) loop(ctx context.Context, reconcile func() error) {
 	defer close(m.done)
-	ticker := time.NewTicker(sharedNetworkHealthCheckInterval)
-	defer ticker.Stop()
+	timer := time.NewTimer(sharedNetworkHealthCheckInterval)
+	defer timer.Stop()
+	var retryDelay time.Duration
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		case <-m.wake:
 		}
-		err := m.reconcile()
+		if ctx.Err() != nil {
+			return
+		}
+		err := reconcile()
 		if err != nil {
 			m.refreshWarnings.warn(m.logger, "refresh eBPF shared-network interfaces: ", err)
+			// Reconciliation disables shared interception on failure. Recover promptly even
+			// when the interface stops emitting network updates after a transient error.
+			retryDelay = min(max(2*retryDelay, sharedNetworkRetryInterval), sharedNetworkMaxRetryInterval)
+			timer.Reset(retryDelay)
+		} else {
+			retryDelay = 0
+			timer.Reset(sharedNetworkHealthCheckInterval)
 		}
 	}
 }
