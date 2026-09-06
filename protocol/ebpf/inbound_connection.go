@@ -105,7 +105,13 @@ func (i *Inbound) NewPacket(buffer *buf.Buffer, oob []byte, source M.Socksaddr) 
 	}
 	client := source.AddrPort()
 	redirectDestination := netip.AddrPortFrom(redirectAddress, i.listeners.selectedPort())
-	cached, bindingReady, loaded := i.udpClientTable.cachedPacketState(client, redirectAddress)
+	// A connected socket can reconnect or reuse its source port before its old
+	// NAT session expires. Its redirect token keeps each fixed peer separate.
+	sessionKey := netip.AddrPortFrom(redirectAddress, client.Port())
+	cached, bindingReady, loaded := i.udpClientTable.cachedPacketState(sessionKey, redirectAddress)
+	if !loaded {
+		cached, bindingReady, loaded = i.udpClientTable.cachedPacketState(client, redirectAddress)
+	}
 	original := cached.original
 	if !loaded {
 		original, err = backend.LookupOriginal(ECommon.ProtocolUDP, redirectDestination)
@@ -120,44 +126,57 @@ func (i *Inbound) NewPacket(buffer *buf.Buffer, oob []byte, source M.Socksaddr) 
 			return
 		}
 	}
+	if !original.ConnectedUDP {
+		sessionKey = client
+	}
 	if !bindingReady {
 		releasedRedirects := i.udpClientTable.setBinding(
-			client,
+			sessionKey,
 			original.Destination,
 			redirectAddress,
 			original.ConnectedUDP,
 		)
 		i.deleteUDPRedirects(releasedRedirects)
 	}
-	i.udpNat.NewPacket([][]byte{buffer.Bytes()}, source, M.SocksaddrFromNetIP(original.Destination), original.ConnectedUDP)
+	i.udpNat.NewPacket(
+		[][]byte{buffer.Bytes()},
+		M.SocksaddrFromNetIP(sessionKey),
+		M.SocksaddrFromNetIP(original.Destination),
+		udpSession{client: client, connected: original.ConnectedUDP},
+	)
 }
 
-func (i *Inbound) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
+type udpSession struct {
+	client    netip.AddrPort
+	connected bool
+}
+
+func (i *Inbound) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, _ M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
+	session := ctx.Value((*udpSession)(nil)).(udpSession)
 	metadata := adapter.InboundContext{
 		Inbound:     i.Tag(),
 		InboundType: i.Type(),
-		Source:      source,
+		Source:      M.SocksaddrFromNetIP(session.client),
 		Destination: destination,
-	}
-	if clientState, loaded := i.udpClientTable.load(source.AddrPort()); loaded {
-		metadata.UDPConnect = clientState.isConnected()
+		UDPConnect:  session.connected,
 	}
 	i.router.RoutePacketConnectionEx(ctx, conn, metadata, onClose)
 }
 
 func (i *Inbound) preparePacketConnection(source M.Socksaddr, destination M.Socksaddr, userData any) (bool, context.Context, N.PacketWriter, N.CloseHandlerFunc) {
-	connectedUDP, _ := userData.(bool)
-	ctx := log.ContextWithNewID(i.ctx)
-	client := source.AddrPort()
-	clientState := i.udpClientTable.loadOrCreate(client)
-	clientState.setConnected(connectedUDP, destination.AddrPort())
+	session := userData.(udpSession)
+	ctx := context.WithValue(log.ContextWithNewID(i.ctx), (*udpSession)(nil), session)
+	sessionKey := source.AddrPort()
+	clientState := i.udpClientTable.loadOrCreate(sessionKey)
+	clientState.setConnected(session.connected, destination.AddrPort())
 	writer := &udpPacketWriter{
 		inbound:     i,
-		client:      client,
+		client:      session.client,
+		sessionKey:  sessionKey,
 		clientState: clientState,
 	}
 	return true, ctx, writer, func(error) {
-		i.deleteUDPRedirects(i.udpClientTable.delete(writer.client, writer.clientState))
+		i.deleteUDPRedirects(i.udpClientTable.delete(writer.sessionKey, writer.clientState))
 	}
 }
 
@@ -229,6 +248,7 @@ func (i *Inbound) socketControl(ipv6Listener bool) control.Func {
 type udpPacketWriter struct {
 	inbound     *Inbound
 	client      netip.AddrPort
+	sessionKey  netip.AddrPort
 	clientState *udpClientState
 }
 
@@ -259,7 +279,7 @@ func (w *udpPacketWriter) reserveReplyBinding(destination netip.AddrPort) (udpRe
 		return udpRedirectBinding{}, err
 	}
 	released, installed := w.inbound.udpClientTable.setReplyBinding(
-		w.client,
+		w.sessionKey,
 		w.clientState,
 		destination,
 		redirectAddress,

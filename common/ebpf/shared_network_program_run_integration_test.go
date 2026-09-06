@@ -194,6 +194,37 @@ func TestSharedNetworkProgramRunIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("IPv4_UDP_checksums", func(t *testing.T) {
+		client := netip.MustParseAddr("192.0.2.30")
+		destination := netip.MustParseAddr("203.0.113.30")
+		for name, checksumEnabled := range map[string]bool{"disabled": false, "enabled": true} {
+			t.Run(name, func(t *testing.T) {
+				request := testIPv4UDPDatagram(client, destination, 54030, 443, checksumEnabled)
+				action, output := runSharedNetworkProgram(t, ingress, request)
+				if action != testTCActOK {
+					t.Fatalf("UDP request was not rewritten: action=%d", action)
+				}
+				token := netip.AddrFrom4([4]byte(output[30:34]))
+				if !netip.MustParsePrefix("127.128.0.0/9").Contains(token) ||
+					binary.BigEndian.Uint16(output[36:38]) != 65531 {
+					t.Fatal("UDP request destination was not rewritten into the listener")
+				}
+				assertIPv4UDPChecksum(t, output, checksumEnabled)
+
+				reply := testIPv4UDPDatagram(token, client, 65531, 54030, checksumEnabled)
+				action, output = runSharedNetworkProgram(t, egress, reply)
+				if action != testTCActOK {
+					t.Fatalf("UDP reply was not rewritten: action=%d", action)
+				}
+				if netip.AddrFrom4([4]byte(output[26:30])) != destination ||
+					binary.BigEndian.Uint16(output[34:36]) != 443 {
+					t.Fatal("UDP reply source was not restored to the original destination")
+				}
+				assertIPv4UDPChecksum(t, output, checksumEnabled)
+			})
+		}
+	})
+
 	t.Run("fail_closed", func(t *testing.T) {
 		malformed := testIPv4TCPPacket(
 			netip.MustParseAddr("192.0.2.40"), netip.MustParseAddr("203.0.113.40"), 55000, 443,
@@ -300,6 +331,40 @@ func testIPv4UDPFragment(
 		copy(transport, payload)
 	}
 	return packet
+}
+
+func testIPv4UDPDatagram(source, destination netip.Addr, sourcePort, destinationPort uint16, checksumEnabled bool) []byte {
+	packet := testIPv4UDPFragment(source, destination, sourcePort, destinationPort, 0, 0, false, []byte("udp-checksum-regression"))
+	if checksumEnabled {
+		udp := packet[testEthernetHeaderLength+testIPv4HeaderLength:]
+		checksum := transportChecksumIPv4(source, destination, unix.IPPROTO_UDP, udp)
+		if checksum == 0 {
+			checksum = 0xffff
+		}
+		binary.BigEndian.PutUint16(udp[6:8], checksum)
+	}
+	return packet
+}
+
+func assertIPv4UDPChecksum(t *testing.T, packet []byte, checksumEnabled bool) {
+	t.Helper()
+	ip := packet[testEthernetHeaderLength : testEthernetHeaderLength+testIPv4HeaderLength]
+	if checksum16(ip) != 0 {
+		t.Fatal("rewritten UDP packet has an invalid IPv4 checksum")
+	}
+	udp := packet[testEthernetHeaderLength+testIPv4HeaderLength:]
+	checksum := binary.BigEndian.Uint16(udp[6:8])
+	if !checksumEnabled {
+		if checksum != 0 {
+			t.Fatalf("disabled IPv4 UDP checksum was changed to %#04x", checksum)
+		}
+		return
+	}
+	source := netip.AddrFrom4([4]byte(ip[12:16]))
+	destination := netip.AddrFrom4([4]byte(ip[16:20]))
+	if checksum == 0 || transportChecksumIPv4(source, destination, unix.IPPROTO_UDP, udp) != 0 {
+		t.Fatal("rewritten packet has an invalid UDP checksum")
+	}
 }
 
 func testIPv4Packet(
