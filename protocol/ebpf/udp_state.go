@@ -3,6 +3,7 @@
 package ebpf
 
 import (
+	"hash/maphash"
 	"net"
 	"net/netip"
 	"sync"
@@ -21,6 +22,8 @@ type udpClientTable struct {
 }
 
 const udpClientShardCount = 16
+
+var udpClientShardSeed = maphash.MakeSeed()
 
 type udpClientShard struct {
 	access  sync.RWMutex
@@ -105,8 +108,14 @@ func (s *udpClientShard) loadOrCreateLocked(client netip.AddrPort) *udpClientSta
 
 func (t *udpClientTable) clientShard(client netip.AddrPort) *udpClientShard {
 	port := client.Port()
-	index := (port ^ port>>8) & (udpClientShardCount - 1)
-	return &t.clientShards[index]
+	index := uint64(port ^ port>>8)
+	// Shared-network clients can use the same source port. Hash the complete
+	// endpoint so those clients do not all contend on a single shard. Local
+	// redirected sockets already have distinct ports; keep their fast path.
+	if !client.Addr().IsLoopback() {
+		index = maphash.Comparable(udpClientShardSeed, client)
+	}
+	return &t.clientShards[index&(udpClientShardCount-1)]
 }
 
 func (t *udpClientTable) cachedOriginal(client netip.AddrPort, redirectAddress netip.Addr) (udpOriginalDestination, bool) {
