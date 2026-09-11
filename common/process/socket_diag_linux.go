@@ -189,13 +189,13 @@ func packSocketDiagRequest(family, protocol byte, source netip.AddrPort, destina
 }
 
 func querySocketDiag(fd int, request []byte) (inode, uid uint32, err error) {
-	_, err = syscall.Write(fd, request)
+	_, err = writeSocketDiag(fd, request)
 	if err != nil {
 		return 0, 0, E.Cause(err, "write netlink request")
 	}
 	buffer := socketDiagBufferPool.Get().(*[64 << 10]byte)
 	defer socketDiagBufferPool.Put(buffer)
-	n, err := syscall.Read(fd, buffer[:])
+	n, err := readSocketDiag(fd, buffer[:])
 	if err != nil {
 		return 0, 0, E.Cause(err, "read netlink response")
 	}
@@ -243,7 +243,7 @@ func dumpSocketDiagFamily(family, protocol uint8, source netip.AddrPort, destina
 		return 0, 0, E.Cause(err, "dial netlink")
 	}
 	defer syscall.Close(fd)
-	_, err = syscall.Write(fd, packSocketDiagRequest(family, protocol, source, netip.AddrPort{}, true))
+	_, err = writeSocketDiag(fd, packSocketDiagRequest(family, protocol, source, netip.AddrPort{}, true))
 	if err != nil {
 		return 0, 0, E.Cause(err, "write netlink request")
 	}
@@ -258,7 +258,7 @@ func dumpSocketDiagFamily(family, protocol uint8, source netip.AddrPort, destina
 	buffer := socketDiagBufferPool.Get().(*[64 << 10]byte)
 	defer socketDiagBufferPool.Put(buffer)
 	for {
-		n, err = syscall.Read(fd, buffer[:])
+		n, err = readSocketDiag(fd, buffer[:])
 		if err != nil {
 			return 0, 0, E.Cause(err, "read netlink response")
 		}

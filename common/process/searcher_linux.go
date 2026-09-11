@@ -34,7 +34,7 @@ var _ Searcher = (*linuxSearcher)(nil)
 type linuxSearcher struct {
 	logger           log.ContextLogger
 	packageManager   tun.PackageManager
-	diagConns        [4]*socketDiagConn
+	diagConns        [4]*socketDiagPool
 	processPathCache *freelru.Cache[uint32, *uidProcessPaths]
 }
 
@@ -52,11 +52,7 @@ func NewSearcher(config Config) (Searcher, error) {
 	}
 	for _, family := range []uint8{syscall.AF_INET, syscall.AF_INET6} {
 		for _, protocol := range []uint8{syscall.IPPROTO_TCP, syscall.IPPROTO_UDP} {
-			searcher.diagConns[socketDiagConnIndex(family, protocol)] = &socketDiagConn{
-				family:   family,
-				protocol: protocol,
-				fd:       -1,
-			}
+			searcher.diagConns[socketDiagConnIndex(family, protocol)] = newSocketDiagPool(family, protocol)
 		}
 	}
 	return searcher, nil
