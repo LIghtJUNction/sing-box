@@ -89,7 +89,7 @@ func (m *Manager) newTrackerMetadata(metadata adapter.InboundContext, matchedRul
 		if !isGroup {
 			break
 		}
-		next = outboundGroup.Now()
+		next = groupTagForNetwork(outboundGroup, metadata.Network)
 	}
 	return TrackerMetadata{
 		ID:           id,
