@@ -23,6 +23,12 @@ const (
 	socketDiagTimeout           = 100 * time.Millisecond
 )
 
+// Buffers are private to a query and contain no references after it returns.
+// Pooling avoids a 64 KiB allocation for each connection-owner lookup.
+var socketDiagBufferPool = sync.Pool{
+	New: func() any { return new([64 << 10]byte) },
+}
+
 type socketDiagConn struct {
 	access   sync.Mutex
 	family   uint8
@@ -187,8 +193,9 @@ func querySocketDiag(fd int, request []byte) (inode, uid uint32, err error) {
 	if err != nil {
 		return 0, 0, E.Cause(err, "write netlink request")
 	}
-	buffer := make([]byte, 64<<10)
-	n, err := syscall.Read(fd, buffer)
+	buffer := socketDiagBufferPool.Get().(*[64 << 10]byte)
+	defer socketDiagBufferPool.Put(buffer)
+	n, err := syscall.Read(fd, buffer[:])
 	if err != nil {
 		return 0, 0, E.Cause(err, "read netlink response")
 	}
@@ -245,12 +252,13 @@ func dumpSocketDiagFamily(family, protocol uint8, source netip.AddrPort, destina
 		hasLocalMatch    bool
 		wildcardMatch    socketDiagEntry
 		hasWildcardMatch bool
-		buffer           = make([]byte, 64<<10)
 		n                int
 		messages         []syscall.NetlinkMessage
 	)
+	buffer := socketDiagBufferPool.Get().(*[64 << 10]byte)
+	defer socketDiagBufferPool.Put(buffer)
 	for {
-		n, err = syscall.Read(fd, buffer)
+		n, err = syscall.Read(fd, buffer[:])
 		if err != nil {
 			return 0, 0, E.Cause(err, "read netlink response")
 		}
