@@ -77,3 +77,6 @@ jobs:
           args: --timeout=30m
           install-mode: binary
           verify: false
+      - name: Show formatting diff
+        if: failure() && matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: golangci-lint fmt --diff common/process/searcher_linux.go common/process/socket_diag_io_linux_test.go
