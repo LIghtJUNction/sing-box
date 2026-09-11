@@ -52,7 +52,8 @@ func TestSocketDiagIODatagram(t *testing.T) {
 		t.Fatalf("write=%d/%v", n, err)
 	}
 	var buffer [32]byte
-	if n, err := readSocketDiag(fds[1], buffer[:]); err != nil || n < 0 || !bytes.Equal(buffer[:n], want) {
+	if n, err := readSocketDiag(fds[1], buffer[:]); err != nil || n < 0 ||
+		!bytes.Equal(buffer[:n], want) {
 		t.Fatalf("read=%d/%v", n, err)
 	}
 	if _, err := readSocketDiag(-1, buffer[:]); err != syscall.EBADF {

@@ -204,7 +204,9 @@ func isIgnorableProcError(err error) bool {
 
 func parseSocketInode(link []byte) (uint32, bool) {
 	const socketPrefix = "socket:["
-	if len(link) <= len(socketPrefix) || string(link[:len(socketPrefix)]) != socketPrefix || link[len(link)-1] != ']' {
+	if len(link) <= len(socketPrefix) ||
+		string(link[:len(socketPrefix)]) != socketPrefix ||
+		link[len(link)-1] != ']' {
 		return 0, false
 	}
 	var inode uint64
