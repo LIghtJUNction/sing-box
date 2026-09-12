@@ -4,12 +4,20 @@ import (
 	"context"
 	"crypto/subtle"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
 	"github.com/sagernet/sing-box/adapter"
 )
+
+func privateTailscaleLog(message string) string {
+	if index := strings.Index(message, "https://login.tailscale.com/a/"); index >= 0 {
+		return message[:index] + "[private Tailscale login URL]"
+	}
+	return message
+}
 
 // Login status is served inside the authenticated API group. Never return the
 // full tailnet peer list or retain an unbounded status subscription for polling.

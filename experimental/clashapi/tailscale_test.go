@@ -72,6 +72,15 @@ func TestTailscaleLoginStatusRequiresConfiguredSecret(t *testing.T) {
 	}
 }
 
+func TestGeneralLogStreamDoesNotExposeLoginCapability(t *testing.T) {
+	if got := privateTailscaleLog("Waiting for authentication: https://login.tailscale.com/a/fixture"); got != "Waiting for authentication: [private Tailscale login URL]" {
+		t.Fatal(got)
+	}
+	if got := privateTailscaleLog("ordinary log"); got != "ordinary log" {
+		t.Fatal(got)
+	}
+}
+
 func TestTailscaleLoginStatusRejectsUnauthenticatedCaller(t *testing.T) {
 	response := httptest.NewRecorder()
 	tailscaleRouter(&Server{tailscaleSecret: "fixture-secret"}).ServeHTTP(response, httptest.NewRequest("GET", "/tailnet", nil))

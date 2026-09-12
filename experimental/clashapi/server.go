@@ -351,7 +351,7 @@ func getLogs(ctx context.Context, logFactory log.ObservableFactory) func(w http.
 			buf.Reset()
 			err = json.NewEncoder(buf).Encode(Log{
 				Type:    log.FormatLevel(logEntry.Level),
-				Payload: logEntry.Message,
+				Payload: privateTailscaleLog(logEntry.Message),
 			})
 			if err != nil {
 				break
