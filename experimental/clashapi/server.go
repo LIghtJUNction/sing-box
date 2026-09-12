@@ -40,18 +40,19 @@ func init() {
 var _ adapter.LifecycleService = (*Server)(nil)
 
 type Server struct {
-	ctx            context.Context
-	network        adapter.NetworkManager
-	router         adapter.Router
-	dnsRouter      adapter.DNSRouter
-	outbound       adapter.OutboundManager
-	endpoint       adapter.EndpointManager
-	logger         log.Logger
-	httpServer     *http.Server
-	trafficManager *trafficcontrol.Manager
-	urlTestHistory *urltest.HistoryStorage
-	clashMode      *clashmode.Manager
-	logDebug       bool
+	ctx             context.Context
+	network         adapter.NetworkManager
+	router          adapter.Router
+	dnsRouter       adapter.DNSRouter
+	outbound        adapter.OutboundManager
+	endpoint        adapter.EndpointManager
+	logger          log.Logger
+	httpServer      *http.Server
+	trafficManager  *trafficcontrol.Manager
+	urlTestHistory  *urltest.HistoryStorage
+	clashMode       *clashmode.Manager
+	logDebug        bool
+	tailscaleSecret string
 
 	externalController       bool
 	externalUI               string
@@ -74,13 +75,14 @@ func NewServer(ctx context.Context, logFactory log.ObservableFactory, options op
 	}
 	chiRouter := chi.NewRouter()
 	s := &Server{
-		ctx:       ctx,
-		network:   service.FromContext[adapter.NetworkManager](ctx),
-		router:    service.FromContext[adapter.Router](ctx),
-		dnsRouter: service.FromContext[adapter.DNSRouter](ctx),
-		outbound:  service.FromContext[adapter.OutboundManager](ctx),
-		endpoint:  service.FromContext[adapter.EndpointManager](ctx),
-		logger:    logFactory.NewLogger("clash-api"),
+		ctx:             ctx,
+		network:         service.FromContext[adapter.NetworkManager](ctx),
+		router:          service.FromContext[adapter.Router](ctx),
+		dnsRouter:       service.FromContext[adapter.DNSRouter](ctx),
+		outbound:        service.FromContext[adapter.OutboundManager](ctx),
+		endpoint:        service.FromContext[adapter.EndpointManager](ctx),
+		logger:          logFactory.NewLogger("clash-api"),
+		tailscaleSecret: options.TailscaleSecret,
 		httpServer: &http.Server{
 			Addr:    options.ExternalController,
 			Handler: chiRouter,
@@ -97,6 +99,9 @@ func NewServer(ctx context.Context, logFactory log.ObservableFactory, options op
 	//nolint:staticcheck
 	if options.StoreMode || options.StoreSelected || options.StoreFakeIP || options.CacheFile != "" || options.CacheID != "" {
 		return nil, E.New("cache_file and related fields in Clash API is deprecated in sing-box 1.8.0, use experimental.cache_file instead.")
+	}
+	if options.Secret != "" {
+		s.tailscaleSecret = options.Secret
 	}
 	allowedOrigins := options.AccessControlAllowOrigin
 	if len(allowedOrigins) == 0 {
@@ -126,6 +131,7 @@ func NewServer(ctx context.Context, logFactory log.ObservableFactory, options op
 		r.Mount("/profile", profileRouter())
 		r.Mount("/cache", cacheRouter(ctx))
 		r.Mount("/dns", dnsRouter(s.dnsRouter))
+		r.Mount("/tailscale", tailscaleRouter(s))
 
 		s.setupMetaAPI(r)
 	})
