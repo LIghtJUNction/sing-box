@@ -106,6 +106,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	})
 
 	platformInterface := service.FromContext[adapter.PlatformInterface](ctx)
+	usePlatformInterface := platformInterface != nil && platformInterface.UsePlatformInterface()
 	if options.NetNs != "" && !C.IsLinux {
 		return nil, E.New("`netns` is only supported on Linux")
 	}
@@ -122,14 +123,14 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		}
 	}
 	var enableGSO bool
-	if C.IsLinux && platformInterface == nil {
+	if C.IsLinux && !usePlatformInterface {
 		switch options.Stack {
 		case "", "go", "gvisor":
 			enableGSO = tunMTU < 49152
 		}
 	}
 	if options.MultiQueue {
-		if !C.IsLinux || platformInterface != nil {
+		if !C.IsLinux || usePlatformInterface {
 			return nil, E.New("`multi_queue` is only supported on Linux")
 		}
 		switch options.Stack {
@@ -550,8 +551,8 @@ func (t *Inbound) InterfaceUpdated(ctx context.Context) {
 
 func (t *Inbound) Close() error {
 	return common.Close(
-		t.tunStack,
-		t.tunIf,
+		tunStack,
+		tunIf,
 		t.autoRedirect,
 	)
 }
