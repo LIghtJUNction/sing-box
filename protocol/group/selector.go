@@ -130,9 +130,11 @@ func (s *Selector) SelectOutbound(tag string) bool {
 	if !loaded {
 		return false
 	}
-	if s.selected.Swap(detour) == detour {
+	if s.selected.Load() == detour {
 		return true
 	}
+	s.selected.Store(detour)
+	invalidateReachability(s.ctx) // lx: SPEC 020 — active selection changed
 	if s.Tag() != "" {
 		cacheFile := service.FromContext[adapter.CacheFile](s.ctx)
 		if cacheFile != nil {
@@ -150,7 +152,14 @@ func (s *Selector) SelectOutbound(tag string) bool {
 }
 
 func (s *Selector) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-	conn, err := s.selected.Load().DialContext(ctx, network, destination)
+	// lx:begin chain
+	// SPEC 073: внутри цепочки выбранный узел подменяется его звеном для хопа.
+	selected, err := adapter.ResolveChainLeaf(ctx, s.selected.Load())
+	if err != nil {
+		return nil, err
+	}
+	conn, err := selected.DialContext(ctx, network, destination)
+	// lx:end chain
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +167,13 @@ func (s *Selector) DialContext(ctx context.Context, network string, destination 
 }
 
 func (s *Selector) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-	conn, err := s.selected.Load().ListenPacket(ctx, destination)
+	// lx:begin chain
+	selected, err := adapter.ResolveChainLeaf(ctx, s.selected.Load())
+	if err != nil {
+		return nil, err
+	}
+	conn, err := selected.ListenPacket(ctx, destination)
+	// lx:end chain
 	if err != nil {
 		return nil, err
 	}
@@ -167,6 +182,12 @@ func (s *Selector) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 
 func (s *Selector) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	ctx = interrupt.ContextWithIsExternalConnection(ctx)
+	// lx: SPEC 064 — register the inbound conn. Upstream 515a73e4e now hands `s`
+	// (not `selected`) to ConnectionManager, so the plain-outbound branch below
+	// registers its outbound socket via Selector.DialContext on its own; the
+	// handler branch (nested groups, handler outbounds) still bypasses it, and
+	// wrapping before the branch keeps both covered. Approach from upstream PR #4285.
+	conn = s.interruptGroup.NewConn(conn, true)
 	selected := s.selected.Load()
 	if outboundHandler, isHandler := selected.(adapter.ConnectionHandler); isHandler {
 		outboundHandler.NewConnection(ctx, conn, metadata, onClose)
@@ -177,6 +198,8 @@ func (s *Selector) NewConnection(ctx context.Context, conn net.Conn, metadata ad
 
 func (s *Selector) NewPacketConnection(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	ctx = interrupt.ContextWithIsExternalConnection(ctx)
+	// lx: SPEC 064 — see NewConnection; same registration gap on the UDP path.
+	conn = s.interruptGroup.NewSingPacketConn(conn, true)
 	selected := s.selected.Load()
 	if outboundHandler, isHandler := selected.(adapter.PacketConnectionHandler); isHandler {
 		outboundHandler.NewPacketConnection(ctx, conn, metadata, onClose)

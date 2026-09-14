@@ -52,6 +52,23 @@ service StartedService {
   rpc SubmitOpenVPNChallengeResponse(OpenVPNChallengeSubmission) returns (google.protobuf.Empty) {}
   rpc CancelOpenVPNChallenge(OpenVPNChallengeCancel) returns (google.protobuf.Empty) {}
   rpc SubscribeNotifications(google.protobuf.Empty) returns (stream NotificationEvent) {}
+
+  // lx:begin lx_command
+
+  rpc URLTestOutbound(URLTestOutboundRequest) returns (URLTestOutboundResponse) {}
+  rpc GetRules(google.protobuf.Empty) returns (RuleList) {}
+  rpc GetGroups(google.protobuf.Empty) returns (Groups) {}
+  rpc GetOutbounds(google.protobuf.Empty) returns (OutboundList) {}
+  rpc SubscribeDNSQueries(SubscribeDNSQueriesRequest) returns (stream DnsQueryEvent) {}
+  rpc GetPool(GetPoolRequest) returns (PoolList) {}
+  rpc GetDNSGroups(google.protobuf.Empty) returns (DnsGroupList) {}
+  rpc GetRunningConfig(google.protobuf.Empty) returns (RunningConfig) {}
+  rpc GetURLViaOutbound(GetURLViaOutboundRequest) returns (GetURLViaOutboundResponse) {}
+  rpc GetChains(google.protobuf.Empty) returns (ChainList) {}
+  rpc SetChainPositionEnabled(SetChainPositionEnabledRequest) returns (SetChainPositionEnabledResponse) {}
+  rpc GetChainCloneConfig(GetChainCloneConfigRequest) returns (RunningConfig) {}
+
+  // lx:end lx_command
 }
 
 message Version {
@@ -118,9 +135,22 @@ message Group {
   string tag = 1;
   string type = 2;
   bool selectable = 3;
+  // The group's current node. For a selector and for urltest mode: least_test this is
+  // THE selected node. For urltest mode: round_robin there is no single current node —
+  // the field carries the last node the balancer happened to pick, so treat it as a hint
+  // and read the full rotation state via GetPool. lx: SPEC 019 v2.
   string selected = 4;
   bool isExpand = 5;
   repeated GroupItem items = 6;
+
+  // lx:begin lx_command
+
+  // urltest mode: "least_test" | "round_robin". Empty for every non-urltest group
+  // (selector), so it doubles as "is this group balanced at all" without probing GetPool
+  // — which is gated behind the with_lx_command build tag. lx: SPEC 019 v2.
+  string mode = 7;
+
+  // lx:end lx_command
 }
 
 message GroupItem {
@@ -200,6 +230,9 @@ message Connection {
   string outboundType = 20;
   repeated string chainList = 21;
   ProcessInfo processInfo = 22;
+  // lx: SPEC 017 — transport detour tail of the final outbound (Chain omits it by
+  // design). Order: final outbound → outward. Empty for outbounds without a detour.
+  repeated string detourList = 23;
 }
 
 message ProcessInfo {
@@ -806,3 +839,219 @@ message NotificationCancel {
   string identifier = 1;
   int32 typeID = 2;
 }
+
+// lx:begin lx_command
+
+message URLTestOutboundRequest {
+  string outboundTag = 1;
+  string link = 2;
+  uint32 timeout = 3;
+}
+message URLTestOutboundResponse {
+  uint32 delay = 1;
+  string error = 2;
+}
+
+// SPEC 058 — diagnostic HTTP probe through a single node. Unlike URLTestOutbound
+// (which reports only a delay) this returns the response body, so the client can
+// answer "which exit IP / geo / warp state does THIS node give me".
+message HttpHeaderPair {
+  string key = 1;
+  string value = 2;
+}
+message GetURLViaOutboundRequest {
+  string outboundTag = 1;
+  string link = 2;
+  uint32 timeout = 3;
+  uint32 maxBytes = 4;
+  repeated HttpHeaderPair headers = 5;
+}
+message GetURLViaOutboundResponse {
+  uint32 httpStatus = 1;
+  bytes body = 2; // bytes, not string: an arbitrary endpoint is not guaranteed valid UTF-8
+  bool truncated = 3;
+  string contentType = 4;
+  string remoteAddr = 5;
+  uint32 elapsedMs = 6;
+  string error = 7;
+}
+
+message Rule {
+  string type = 1;
+  string payload = 2;
+  string action = 3;
+  bool isDNS = 4;
+}
+message RuleList {
+  repeated Rule rules = 1;
+}
+
+// SPEC 018 — one structured DNS resolution. source is the resolver verb
+// (exchanged/cached/optimistic/refreshed/failed); processInfo carries app attribution
+// (package/uid) the text log lacks. Reuses the existing ProcessInfo message.
+// failed+error cover timeout/SERVFAIL/rejected (пункт 1); rcode is -1 when there was no
+// response. answers is the full response.Answer (CNAME hops + A/AAAA) in wire order, only
+// populated when the subscriber set includeAnswers (пункт 2).
+message SubscribeDNSQueriesRequest {
+  bool includeAnswers = 1;
+}
+message DnsQueryEvent {
+  string domain = 1;
+  uint32 queryType = 2;
+  int32 rcode = 3;
+  uint32 ttl = 4;
+  string source = 5;
+  ProcessInfo processInfo = 6;
+  bool failed = 7;
+  string error = 8;
+  repeated DnsAnswer answers = 9;
+  // SPEC 018 — which DNS server (transport) resolved this, and the outbound channel that
+  // server is bound to. A selector tag is resolved to the live node via Now() server-side.
+  // outbound is empty on cached/optimistic paths (the query never left the device).
+  string dnsServer = 10;
+  string dnsServerType = 11;
+  repeated string outbound = 12;
+  // SPEC 035 — group probe trace. dnsGroupPath is the group nesting INSIDE-OUT
+  // (empty = the query did not go through a group); attempts is the probe
+  // chronology snapshotted at answer time (fan stragglers that resolved later
+  // are absent by design — the full picture is GetDNSGroups); fanned marks a
+  // query that involved a fan-out (rescue / election / parallel); survival
+  // marks an answer obtained via the least dirty server when no member was
+  // clean (degradation would otherwise be invisible in the stream).
+  repeated string dnsGroupPath = 13;
+  repeated DnsGroupAttempt attempts = 14;
+  bool fanned = 15;
+  bool survival = 16;
+}
+// One resolved member probe of a DNS group (SPEC 035). outcome vocabulary:
+// answered | timeout | network_error | servfail ("answered" includes NXDOMAIN
+// and empty answers — they are valid responses, not failures).
+message DnsGroupAttempt {
+  string server = 1;
+  string serverType = 2;
+  string outcome = 3;
+  uint32 rttMs = 4;
+}
+message DnsAnswer {
+  string name = 1;
+  uint32 type = 2;
+  string rdata = 3;
+  uint32 ttl = 4;
+}
+
+// SPEC 019 v2 — the round_robin rotation pool of a urltest group. One PoolSlot per fixed
+// slot. delay is the node's last test result in ms; 0 means dead/not-measured (a live node
+// is clamped to >= 1 server-side). A non-round_robin group (selector/least_test) returns an
+// empty slots list — "this group has no pool", not an error.
+message GetPoolRequest {
+  string groupTag = 1;
+}
+message PoolSlot {
+  uint32 slot = 1;
+  string tag = 2;
+  uint32 delay = 3;
+}
+message PoolList {
+  repeated PoolSlot slots = 1;
+}
+
+// SPEC 035 v3 — point-in-time record snapshot of every DNS group in the
+// config (groups are few; the UI draws them all, so there is no per-tag
+// request). clean = zero live errors; lastErrorAgeMs: age of the newest live
+// error, -1 = none; liveWins: live win records (fastest mode);
+// current = the group's sticky target; lastRttMs: last successful probe,
+// 0 = never measured. The UI derives "when does it clear" from the ages and
+// the error_ttl/win_ttl it knows from the config.
+message DnsGroupMember {
+  string tag = 1;
+  string serverType = 2;
+  bool clean = 3;
+  uint32 liveErrors = 4;
+  int64 lastErrorAgeMs = 5;
+  uint32 liveWins = 6;
+  bool current = 7;
+  uint32 lastRttMs = 8;
+}
+message DnsGroupState {
+  string tag = 1;
+  string mode = 2;
+  string current = 3;
+  repeated DnsGroupMember members = 6;
+}
+message DnsGroupList {
+  repeated DnsGroupState groups = 1;
+}
+
+// SPEC 037 — the canonical serialization of the options the running box was actually
+// built from: post-override (tun AutoRedirect/packages, injected OOM-killer service),
+// re-marshaled from the parsed struct. NOT byte-identical to the profile text the client
+// sent (field order, omitempty, [] -> null normalization) — compare semantically, not
+// textually. Serialized once at service start; this is a cheap string handoff.
+message RunningConfig {
+  string content = 1;
+}
+
+// SPEC 073 — state of every `chain` outbound: per position the resolved node
+// (`now`; `transparent` = direct at position >= 1 collapses the hop) and, for
+// positions >= 1, the live link instance ("clone") of that node: state
+// starting|active|idle, live connections, ages, effective MTU and why,
+// what `strip` removed and whether `rewrite` applied, last dial error.
+message ChainCloneState {
+  string state = 1;
+  int64 activeConns = 2;
+  int64 lastPickedAgeMs = 3;
+  int64 createdAgeMs = 4;
+  uint32 mtuConfigured = 5;
+  uint32 mtuEffective = 6;
+  string mtuReason = 7;
+  repeated string stripped = 8;
+  bool rewritten = 9;
+  string lastError = 10;
+}
+message ChainPosition {
+  string tag = 1;
+  bool isGroup = 2;
+  string now = 3;
+  bool transparent = 4;
+  int64 errors = 5;
+  ChainCloneState clone = 6;
+  // SPEC 075 — runtime toggle: the position is excluded from the path (`now`
+  // stays filled so diagnostics can show WHAT is disabled; clone is nil).
+  bool disabled = 7;
+}
+message ChainState {
+  string tag = 1;
+  repeated ChainPosition positions = 2;
+  int64 dials = 3;
+  int64 errors = 4;
+  int64 clonesCreated = 5;
+  int64 clonesEvicted = 6;
+  int64 liveClones = 7;
+}
+message ChainList {
+  repeated ChainState chains = 1;
+}
+
+// SPEC 075 — runtime enable/disable of one chain position (packet order,
+// 0 = entry). Any combination is valid: all positions disabled degenerates the
+// chain into direct. The flag always applies; a failed link warm-up on enable
+// is DATA (warmupError), not a status error — status errors are reserved for
+// genuine call failures (unknown chain, index out of range, service stopped).
+message SetChainPositionEnabledRequest {
+  string chainTag = 1;
+  int32 position = 2;
+  bool enabled = 3;
+}
+message SetChainPositionEnabledResponse {
+  string warmupError = 1; // "" = ok, or warm-up not applicable (urltest/direct/disable)
+}
+// SPEC 075 — effective post-transform options JSON ({type, tag, ...} after
+// strip/rewrite/MTU/detour) of the live link at the position's currently
+// resolved leaf. Snapshotted at clone creation (RunningConfig model, SPEC 037).
+// NotFound when no live link exists (position 0, transparent, evicted, disabled).
+message GetChainCloneConfigRequest {
+  string chainTag = 1;
+  int32 position = 2;
+}
+
+// lx:end lx_command

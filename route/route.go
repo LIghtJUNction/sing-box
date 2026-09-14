@@ -32,6 +32,16 @@ var defaultPacketSniffers = []sniff.PacketSniffer{
 	sniff.DomainNameQuery,
 	sniff.QUICClientHello,
 	sniff.STUNMessage,
+	// lx:begin sniff-lx
+	// Before UTP: a WireGuard handshake initiation (01 00 00 00 …, 148 B)
+	// satisfies the uTP ST_DATA check and was reported as bittorrent (SPEC 078).
+	// The 079 sniffers sit here too: each has a stricter shape than uTP.
+	sniff.WireGuard,
+	sniff.OpenVPN,
+	sniff.IKE,
+	sniff.TailscaleDisco,
+	sniff.SIP,
+	// lx:end sniff-lx
 	sniff.UTP,
 	sniff.UDPTracker,
 	sniff.DTLSRecord,
@@ -98,6 +108,12 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
 		return E.New("global UoT (legacy) not supported since sing-box v1.7.0.")
 	}
 	if metadata.InboundType == C.TypeTun && metadata.Protocol == C.ProtocolDNS {
+		// lx: SPEC 018 — attribute the DNS query to its process BEFORE hijacking. This
+		// fast-path returns before matchRule (where searchProcessInfo normally runs), so
+		// without this every TUN-hijacked DNS query reached the resolver with a nil
+		// ProcessInfo and the SubscribeDNSQueries stream emitted it unattributed (§180-2).
+		// Idempotent + cached (findProcessInfoCached), so the cost is one lookup per flow.
+		r.searchProcessInfo(ctx, &metadata)
 		N.CloseOnHandshakeFailure(conn, onClose, r.hijackDNSStream(ctx, conn, metadata))
 		return nil
 	}
@@ -237,6 +253,9 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
 		conn = deadline.NewPacketConn(bufio.NewNetPacketConn(conn))
 	}*/
 	if metadata.InboundType == C.TypeTun && metadata.Protocol == C.ProtocolDNS {
+		// lx: SPEC 018 — attribute before hijack (same reason as the stream path above);
+		// UDP DNS is the bulk of DNS on an Android VPN, so this is the main attribution gap.
+		r.searchProcessInfo(ctx, &metadata)
 		return r.hijackDNSPacket(ctx, conn, nil, metadata, onClose)
 	}
 	selectedRule, _, _, packetBuffers, err := r.matchRule(ctx, &metadata, nil, conn)
@@ -402,6 +421,9 @@ func (r *Router) PreMatch(metadata adapter.InboundContext, firstPacket []byte) a
 			return result
 		case *R.RuleActionReject:
 			rejectErr := action.Error(r.ctx)
+			if rejectErr == nil && metadata.Network == N.NetworkICMP {
+				return continueResult
+			}
 			if errors.Is(rejectErr, R.ErrDrop) {
 				return adapter.PreMatchResult{Action: adapter.PreMatchDrop}
 			}
@@ -731,6 +753,10 @@ func (r *Router) actionSniff(
 				sniff.BitTorrent,
 				sniff.SSH,
 				sniff.RDP,
+				// lx:begin sniff-lx
+				sniff.SIPStream,
+				sniff.OpenVPNStream,
+				// lx:end sniff-lx
 			}
 		}
 		sniffBuffer := buf.NewPacket()

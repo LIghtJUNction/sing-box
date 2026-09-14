@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -64,7 +65,7 @@ type NetworkManager struct {
 	interfaceUpdateRunAccess sync.Mutex
 	powerUpdateAccess        sync.Mutex
 	powerUpdateCancel        context.CancelFunc
-	started                  bool
+	started                  atomic.Bool // lx: written by Start (PostStart) while upstream's background interface-update goroutine (6720a2710) reads it — data race under -race
 }
 
 func NewNetworkManager(ctx context.Context, logger logger.ContextLogger, options option.RouteOptions, dnsOptions option.DNSOptions) (*NetworkManager, error) {
@@ -217,7 +218,7 @@ func (r *NetworkManager) Start(stage adapter.StartStage) error {
 				}
 			}
 		}
-		r.started = true
+		r.started.Store(true)
 	}
 	return nil
 }
@@ -481,6 +482,14 @@ func (r *NetworkManager) UpdateWIFIState(ctx context.Context) {
 }
 
 func (r *NetworkManager) ResetNetwork(ctx context.Context) {
+	// lx:begin early-rpc-guard
+	// Поля ниже присваиваются на StartStateInitialize; ранний RPC (смена
+	// интерфейса на старте туннеля) приходит до этой стадии — SPECS/TASKS/047.
+	if r.router == nil || r.endpoint == nil || r.inbound == nil || r.outbound == nil {
+		return
+	}
+	// lx:end early-rpc-guard
+
 	if r.connectionManager != nil {
 		r.connectionManager.CloseAll()
 	}
@@ -491,6 +500,19 @@ func (r *NetworkManager) ResetNetwork(ctx context.Context) {
 			listener.InterfaceUpdated(ctx)
 		}
 	}
+	// lx:begin chain
+	// SPEC 073: звенья-endpoint'ы цепочек (вне менеджера) тоже переезжают на
+	// новый интерфейс.
+	for _, outbound := range r.outbound.Outbounds() {
+		if holder, ok := outbound.(adapter.EndpointCloneHolder); ok {
+			for _, endpoint := range holder.CloneEndpoints() {
+				if listener, isListener := endpoint.(adapter.InterfaceUpdateListener); isListener {
+					listener.InterfaceUpdated(ctx)
+				}
+			}
+		}
+	}
+	// lx:end chain
 
 	for _, inbound := range r.inbound.Inbounds() {
 		listener, isListener := inbound.(adapter.InterfaceUpdateListener)
@@ -581,7 +603,7 @@ func (r *NetworkManager) updateInterface(ctx context.Context, defaultInterface *
 	if ctx.Err() != nil {
 		return
 	}
-	if !r.started {
+	if !r.started.Load() {
 		return
 	}
 	r.ResetNetwork(ctx)

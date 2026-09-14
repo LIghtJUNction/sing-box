@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,6 +32,7 @@ var (
 	_ adapter.InterfaceUpdateListener     = (*Endpoint)(nil)
 	_ adapter.OnDemandEndpoint            = (*Endpoint)(nil)
 	_ dialer.PacketDialerWithDestination  = (*Endpoint)(nil)
+	_ adapter.IdleSuspendable             = (*Endpoint)(nil) // lx: SPEC 020 idle-suspend
 )
 
 func RegisterEndpoint(registry *endpoint.Registry) {
@@ -46,11 +48,57 @@ type Endpoint struct {
 	localAddresses []netip.Prefix
 	endpoint       *wireguard.Endpoint
 	onDemand       bool
+	// lx: SPEC 029 — the outbound dialer, retained so Start can force its detour
+	// to resolve after the dependency topo-sort has started the detour provider
+	// (see the StartStateStart case in Start).
+	outboundDialer N.Dialer
 	bindAccess     sync.Mutex
 	started        atomic.Bool
+	// lx:begin idle-suspend
+	// SPEC 020 idle-suspend state. lastActivity is the unix-nano timestamp of the
+	// last dial through this endpoint, stamped at PostStart and on every dial entry.
+	// idleAsleep is true while the endpoint is Down due to idle-suspend (distinct
+	// from a deliberately-stopped endpoint, which has started=false and
+	// idleAsleep=false, so it fast-paths out of resumeOnDial and is never
+	// idle-woken). resumeMu serialises the idle tick's suspend decision against a
+	// dial's wake.
+	lastActivity atomic.Int64
+	idleAsleep   atomic.Bool
+	resumeMu     sync.Mutex
+	// listenMode marks an endpoint with listen_port (inbound peers may connect at
+	// any time). It has no dial path to wake it, so idle-suspend must skip it —
+	// suspending would silently drop remote peers with no recovery.
+	listenMode bool
+	// torndown is true while the endpoint is at SPEC 020 level 3: asleep AND its
+	// device + gVisor netstack released. It coexists with idleAsleep (a torn-down
+	// endpoint is still "asleep by idle"); the difference is the wake path —
+	// rebuild instead of Up. sleepSince is the unix-nano moment it fell asleep,
+	// the clock lx_idle_teardown counts from (NOT the dial clock: the teardown
+	// window is "how long it has been sleeping", independent of which threshold
+	// put it to sleep). Both guarded by resumeMu.
+	torndown   atomic.Bool
+	sleepSince atomic.Int64
+	// lastTransferSum is the device rx+tx total seen by the previous suspend
+	// decision. Established flows never re-enter the dial path (traffic goes
+	// app→conn→netstack→device), so the dial-based activity clock alone would
+	// suspend an endpoint mid-transfer; any movement of this counter refreshes
+	// the clock instead. Guarded by resumeMu (only the tick reads/writes it).
+	lastTransferSum uint64
+	// lx:end idle-suspend
+	// closing is set at the top of Close (before resumeMu) so an in-flight
+	// resumeOnDial wake aborts instead of starting a fresh device rebuild that
+	// Close would then have to wait out. SPEC 030 fast shutdown.
+	closing atomic.Bool
 }
 
 func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.WireGuardEndpointOptions) (adapter.Endpoint, error) {
+	// lx: SPEC 028 — allow OS-level fragmentation of the outer UDP socket by
+	// default (parity with direct/hysteria2/tuic). Without this the dialer sets
+	// DF (IP_MTU_DISCOVER=IP_PMTUDISC_DO / IP_DONTFRAG), and an outer datagram
+	// that exceeds the path MTU — routine when this endpoint is a detour for a
+	// nested WG/AWG/MASQUE tunnel, or with AWG s4 transport junk — is silently
+	// dropped instead of fragmented. `udp_fragment: false` restores DF.
+	options.UDPFragmentDefault = true
 	ep := &Endpoint{
 		Adapter:        endpoint.NewAdapterWithDialerOptions(C.TypeWireGuard, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions),
 		ctx:            ctx,
@@ -59,6 +107,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		logger:         logger,
 		localAddresses: options.Address,
 		onDemand:       options.OnDemand,
+		listenMode:     options.ListenPort != 0, // lx: SPEC 020 — no dial path, never idle-suspend
 	}
 	if options.Detour != "" && options.ListenPort != 0 {
 		return nil, E.New("`listen_port` is conflict with `detour`")
@@ -74,6 +123,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	if err != nil {
 		return nil, err
 	}
+	ep.outboundDialer = outboundDialer
 	var udpTimeout time.Duration
 	if options.UDPTimeout != 0 {
 		udpTimeout = time.Duration(options.UDPTimeout)
@@ -105,7 +155,8 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		CreateDialer: func(interfaceName string) N.Dialer {
 			return common.Must1(dialer.NewDefault(ctx, option.DialerOptions{
 				AbstractDialerOptions: option.AbstractDialerOptions{
-					BindInterface: interfaceName,
+					BindInterface:      interfaceName,
+					UDPFragmentDefault: true, // lx: SPEC 028
 				},
 			}))
 		},
@@ -129,6 +180,12 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 			}
 		}),
 		Workers: options.Workers,
+		// lx:begin awg
+		// Carry AmneziaWG 2.0 obfuscation params to the transport device. They are
+		// applied only under the `with_awg` build tag; otherwise a non-empty value
+		// is rejected with an explicit "awg support not built" error.
+		AmneziaWG: options.AmneziaWGOptions,
+		// lx:end awg
 	})
 	if err != nil {
 		return nil, err
@@ -137,23 +194,276 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	return ep, nil
 }
 
+func (w *Endpoint) OnDemand() bool {
+	return w.onDemand
+}
+
 func (w *Endpoint) Start(stage adapter.StartStage) error {
+	// lx: SPEC 070 — serialise Start against Close. The daemon releases its
+	// service lock while instance.Start() runs (so a stop can interrupt a slow
+	// start), which makes Box.Close legal at ANY point during Box.Start. Close
+	// nils the transport tun device (SPEC 020 level 3); an unserialised stage
+	// then dereferences it (field crash: SIGSEGV in transport Start at
+	// SetDevice). resumeMu makes each stage atomic with respect to Close — the
+	// same discipline every runtime transition (resumeOnDial rebuild, suspend,
+	// teardown) already follows — and the closing gate refuses to start a
+	// device the pending Close would immediately tear down again. The stage is
+	// bounded work (peer domain resolution is a deferred callback), so a Close
+	// waiting here is waiting microseconds, not on the network.
+	w.resumeMu.Lock()
+	defer w.resumeMu.Unlock()
+	if w.closing.Load() {
+		return os.ErrClosed
+	}
 	switch stage {
 	case adapter.StartStateStart:
-		return w.endpoint.Start(false)
+		if err := w.endpoint.Start(false); err != nil {
+			return err
+		}
+		// lx: SPEC 029 — resolve the detour now, not lazily at first dial. The
+		// outbound manager's dependency topo-sort guarantees the detour provider
+		// (declared as this endpoint's Dependency) has already started at this
+		// stage, regardless of config array order — so the resolve sees the full
+		// graph and a genuine miss fails loudly here instead of being silently
+		// cached as "detour not found" forever by the dialer's sync.Once. A
+		// no-detour endpoint is a cheap no-op (InitializeDetour returns nil for a
+		// non-DetourDialer). Durable across SPEC 020 suspend/resume: the dialer is
+		// built once and its resolution is memoised.
+		return dialer.InitializeDetour(w.outboundDialer)
 	case adapter.StartStatePostStart:
 		err := w.endpoint.Start(true)
 		if err != nil {
 			return err
 		}
 		w.started.Store(true)
+		// lx: SPEC 020 — baseline idle clock so a never-dialed endpoint is "idle
+		// since start" and only suspends after a genuine idle window, not at tick 1.
+		w.stampActivity()
 	}
 	return nil
 }
 
+// lx:begin idle-suspend
+
+// idleSuspendTransferThreshold is the minimum rx+tx byte delta between two
+// suspend decisions that counts as live (non-TCP) traffic. WireGuard keepalive
+// (32 B / keepalive-interval) plus a periodic rekey (~240 B / ~2 min) stay far
+// below it over a tick window; any real QUIC/UDP flow clears it instantly.
+const idleSuspendTransferThreshold = 4096
+
+// stampActivity records the current time as the last dial through this endpoint.
+func (w *Endpoint) stampActivity() {
+	w.lastActivity.Store(time.Now().UnixNano())
+}
+
+// IdleSince reports how long it has been since the last dial through this
+// endpoint. A never-stamped endpoint (lastActivity == 0) reports a very large
+// duration; PostStart stamps a baseline so this never happens for a live one.
+func (w *Endpoint) IdleSince() time.Duration {
+	last := w.lastActivity.Load()
+	if last == 0 {
+		return time.Duration(1<<63 - 1)
+	}
+	return time.Since(time.Unix(0, last))
+}
+
+// SuspendIfIdle is the idle tick's per-endpoint decision (SPEC 020). It brings
+// the endpoint Down — freeing the recv-worker bufsArrs, the dominant GC-scan
+// holder — when it is unreachable from the active routing tree AND has been idle
+// past the threshold. Silent on every non-transition (edge-triggered logging).
+//
+// It never touches a deliberately-stopped endpoint: that one already has
+// started==false but idleAsleep==false, and the `!started` check below short-
+// circuits before the CAS. resumeMu mutually excludes this against resumeOnDial.
+func (w *Endpoint) SuspendIfIdle(reachable bool, threshold time.Duration, reachableThreshold time.Duration) {
+	w.resumeMu.Lock()
+	defer w.resumeMu.Unlock()
+	if w.listenMode {
+		// Inbound peers may connect at any time and nothing dials to wake us.
+		return
+	}
+	effective := threshold
+	if reachable {
+		// Reachable endpoints stay up by default; lx_idle_suspend_reachable opts
+		// them into a second, longer idle window (first dial after it pays ~1 RTT).
+		if reachableThreshold <= 0 {
+			return
+		}
+		effective = reachableThreshold
+	}
+	if w.IdleSince() < effective {
+		return
+	}
+	if !w.started.Load() {
+		// Already down some other way (deliberately stopped, closed).
+		return
+	}
+	// Established flows never re-enter the dial path (app→conn→netstack→device),
+	// so the dial clock alone would suspend an endpoint mid-transfer and blackhole
+	// the connection. Two live-traffic gates, both off the hot path (suspend
+	// candidates only):
+	// 1. Established TCP flows in the device's gVisor stack — precise and immune
+	//    to WireGuard keepalive/rekey noise. No activity stamp: the moment the
+	//    last flow closes, the endpoint is idle again.
+	if w.endpoint.ActiveTCPFlows() > 0 {
+		return
+	}
+	// 2. Transfer-counter delta for non-TCP traffic (QUIC/UDP flows). A bare
+	//    "counters moved" check would never suspend a persistent_keepalive peer
+	//    (keepalive + periodic rekey move rx/tx forever), so require a real byte
+	//    volume since the last decision; keepalive/rekey noise stays well under
+	//    the threshold and the endpoint still suspends.
+	sum := w.endpoint.TransferTotals()
+	delta := sum - w.lastTransferSum // uint64 wrap on anomaly → huge delta → harmless stamp
+	w.lastTransferSum = sum
+	if delta >= idleSuspendTransferThreshold {
+		w.stampActivity()
+		return
+	}
+	if w.idleAsleep.CompareAndSwap(false, true) {
+		w.started.Store(false)
+		w.sleepSince.Store(time.Now().UnixNano()) // lx: SPEC 020 — teardown clock starts here
+		w.endpoint.Suspend()                      // device.Down(): recv-workers exit, bufsArrs freed
+		w.logger.Info("lx idle: suspend ", w.Tag(), " idle=", w.IdleSince().Truncate(time.Second))
+	}
+}
+
+// SleepSince reports how long the endpoint has been idle-asleep, or 0 when it is
+// not asleep. lx: SPEC 020 level 3 — the clock lx_idle_teardown counts from.
+func (w *Endpoint) SleepSince() time.Duration {
+	since := w.sleepSince.Load()
+	if since == 0 || !w.idleAsleep.Load() {
+		return 0
+	}
+	return time.Since(time.Unix(0, since))
+}
+
+// TeardownIfSlept is the idle tick's level-3 decision (SPEC 020): an endpoint
+// that has been ASLEEP longer than threshold is torn down completely — device
+// Closed, gVisor netstack (~5.9 MB) freed — leaving only its config. The next
+// dial rebuilds it (~0.5-1 s) instead of the ~1 RTT a merely-suspended endpoint
+// pays; that trade is the whole point of the level.
+//
+// Only ever touches an endpoint that is already idle-asleep, so every gate that
+// blocked the suspend (reachability, live flows, listen-mode) has already been
+// honoured: a deliberately-stopped endpoint has idleAsleep=false and is skipped
+// here, and a woken endpoint clears idleAsleep under the same mutex.
+func (w *Endpoint) TeardownIfSlept(threshold time.Duration) {
+	if threshold <= 0 {
+		return
+	}
+	w.resumeMu.Lock()
+	defer w.resumeMu.Unlock()
+	if !w.idleAsleep.Load() || w.torndown.Load() {
+		return
+	}
+	if w.SleepSince() < threshold {
+		return
+	}
+	if w.torndown.CompareAndSwap(false, true) {
+		slept := w.SleepSince().Truncate(time.Second)
+		w.endpoint.Teardown() // device.Close(): netstack, peers, queues all freed
+		w.logger.Info("lx idle: teardown ", w.Tag(), " slept=", slept)
+	}
+}
+
+// resumeOnDial is called at the top of every dial entry. It stamps activity
+// (always, closing the race with the idle tick) and, if the endpoint was
+// idle-suspended, wakes it (device.Up()) before the dial proceeds — so the first
+// write lands on a live device. Wake pays a fresh handshake (Down zeroed the
+// session); that cost is on the first packet, as for any cold WG dial.
+//
+// Returns true if the endpoint is dialable (awake), false if it must stay down
+// (deliberately stopped / closed — not an idle-suspend, so we do not resurrect it).
+func (w *Endpoint) resumeOnDial() bool {
+	w.stampActivity()
+	// lx: SPEC 030 — a close is pending: do not resurrect. Refusing here (and
+	// again under the lock) keeps Close from blocking on a fresh rebuild we would
+	// only tear straight back down.
+	if w.closing.Load() {
+		return false
+	}
+	if !w.idleAsleep.Load() {
+		// Fast path: either fully awake, or down for a non-idle reason we must not wake.
+		return w.started.Load()
+	}
+	w.resumeMu.Lock()
+	defer w.resumeMu.Unlock()
+	if w.closing.Load() {
+		return false
+	}
+	if !w.idleAsleep.Load() {
+		return w.started.Load()
+	}
+	// lx: SPEC 020 level 3 — a torn-down endpoint needs a full rebuild (new tun
+	// device + netstack) and both Start stages, not just device.Up(). Concurrent
+	// dials serialise on resumeMu, so only the first one rebuilds.
+	if w.torndown.Load() {
+		// Any failure below rolls back to a CLEAN torn-down state via Teardown()
+		// (idempotent). Leaving a half-rebuilt endpoint would be worse than the
+		// error itself: the tun device's events channel holds one buffered EventUp,
+		// so re-running Start over a device that already sent it would block
+		// forever on that channel — under resumeMu, hanging every dial.
+		rebuildFailed := func(stage string, err error) bool {
+			w.logger.Error("lx idle: rebuild ", w.Tag(), " ", stage, " failed: ", err)
+			w.endpoint.Teardown()
+			return false // flags untouched — the next dial retries from scratch
+		}
+		if err := w.endpoint.Rebuild(); err != nil {
+			return rebuildFailed("device", err)
+		}
+		// Stage 1 wires the bind/device, stage 2 resolves peer domains and brings
+		// the device up. Both are what a cold start runs.
+		if err := w.endpoint.Start(false); err != nil {
+			return rebuildFailed("start", err)
+		}
+		if err := w.endpoint.Start(true); err != nil {
+			return rebuildFailed("post-start", err)
+		}
+		w.torndown.Store(false)
+		w.started.Store(true)
+		w.idleAsleep.Store(false)
+		w.sleepSince.Store(0)
+		w.logger.Info("lx idle: rebuild ", w.Tag(), " by=dial")
+		return true
+	}
+	// A failed Up() leaves wireguard-go in deviceStateDown with the bind closed
+	// and every peer stopped. Keeping the idle-asleep flags in that case is what
+	// makes the next dial retry the wake: clearing them would mark the endpoint
+	// live over a down device, and nothing would ever call Up() again — the fast
+	// path above returns started, InterfaceUpdated's BindUpdate is a close-only
+	// no-op while down, and the handshake timers that drive the SPEC 041 self-heal
+	// are stopped along with the peers.
+	if err := w.endpoint.Resume(); err != nil {
+		w.logger.Error("lx idle: wake ", w.Tag(), " failed: ", err)
+		return false
+	}
+	w.started.Store(true)
+	w.idleAsleep.Store(false)
+	w.sleepSince.Store(0)
+	w.logger.Info("lx idle: wake ", w.Tag(), " by=dial")
+	return true
+}
+
+// lx:end idle-suspend
+
 func (w *Endpoint) Close() error {
-	w.bindAccess.Lock()
+	// lx: SPEC 030 — signal a pending close BEFORE contending for resumeMu, so an
+	// in-flight resumeOnDial wake sees it and aborts (returns not-dialable)
+	// instead of starting a full device rebuild + handshake that this Close would
+	// then block on. SPEC 030 fast shutdown.
+	w.closing.Store(true)
+	// lx: SPEC 020 — box.Close tears endpoints down BEFORE the router stops the
+	// idle tick. Take resumeMu so an in-flight tick decision (possibly inside
+	// device.Down()) finishes first, and clear both flags under it so any later
+	// tick short-circuits on !started instead of calling Suspend on a closed
+	// device.
+	w.bindAccess.Lock() // upstream: serialize with updateBind (InterfaceUpdated)
+	w.resumeMu.Lock()
 	w.started.Store(false)
+	w.idleAsleep.Store(false)
+	w.torndown.Store(false) // lx: SPEC 020 level 3 — Close is idempotent over a torn-down endpoint
+	w.resumeMu.Unlock()
 	w.bindAccess.Unlock()
 	return w.endpoint.Close()
 }
@@ -163,14 +473,6 @@ func (w *Endpoint) InterfaceUpdated(ctx context.Context) {
 		return
 	}
 	go w.updateBind(ctx)
-}
-
-func (w *Endpoint) OnDemand() bool {
-	return w.onDemand
-}
-
-func (w *Endpoint) SetKeepIdleConnections(keep bool) {
-	w.endpoint.SetIdle(!keep)
 }
 
 func (w *Endpoint) updateBind(ctx context.Context) {
@@ -228,7 +530,7 @@ func (w *Endpoint) NewDNSPacket(payload []byte, source M.Socksaddr, destination 
 }
 
 func (w *Endpoint) WritePackets(packets [][]byte) error {
-	if !w.started.Load() {
+	if !w.resumeOnDial() { // lx: SPEC 020 — stamp activity + wake if idle-suspended; L3-forward path (established flows transit here, bypassing DialContext)
 		return E.New("WireGuard is not ready yet")
 	}
 	return w.endpoint.WritePackets(packets)
@@ -285,36 +587,46 @@ func (w *Endpoint) DialContext(ctx context.Context, network string, destination 
 	case N.NetworkUDP:
 		w.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	}
-	if !w.started.Load() {
-		return nil, E.New("WireGuard is not ready yet")
-	}
 	if destination.IsDomain() {
+		// lx: SPEC 020 — resolve BEFORE waking: the lookup does not go through this
+		// endpoint (a DNS detour through it re-enters DialContext with an IP and
+		// wakes it itself), so a failed lookup must not pay a full Up+handshake.
 		destinationAddresses, err := w.dnsRouter.Lookup(ctx, destination.Fqdn, adapter.DNSQueryOptions{})
 		if err != nil {
 			return nil, err
 		}
+		if !w.resumeOnDial() { // lx: SPEC 020 — stamp activity + wake if idle-suspended
+			return nil, E.New("WireGuard is not ready yet")
+		}
 		return N.DialSerial(ctx, w.endpoint, network, destination, destinationAddresses)
 	} else if !destination.Addr.IsValid() {
 		return nil, E.New("invalid destination: ", destination)
+	}
+	if !w.resumeOnDial() { // lx: SPEC 020 — stamp activity + wake if idle-suspended
+		return nil, E.New("WireGuard is not ready yet")
 	}
 	return w.endpoint.DialContext(ctx, network, destination)
 }
 
 func (w *Endpoint) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
 	w.logger.InfoContext(ctx, "outbound packet connection to ", destination)
-	if !w.started.Load() {
-		return nil, netip.Addr{}, E.New("WireGuard is not ready yet")
-	}
 	if destination.IsDomain() {
+		// lx: SPEC 020 — resolve before waking (see DialContext).
 		destinationAddresses, err := w.dnsRouter.Lookup(ctx, destination.Fqdn, adapter.DNSQueryOptions{})
 		if err != nil {
 			return nil, netip.Addr{}, err
+		}
+		if !w.resumeOnDial() { // lx: SPEC 020 — stamp activity + wake if idle-suspended
+			return nil, netip.Addr{}, E.New("WireGuard is not ready yet")
 		}
 		packetConn, destinationAddress, err := N.ListenSerial(ctx, w.endpoint, destination, destinationAddresses)
 		if err != nil {
 			return nil, netip.Addr{}, err
 		}
 		return iponly.NewPacketConn(w.logger, packetConn), destinationAddress, nil
+	}
+	if !w.resumeOnDial() { // lx: SPEC 020 — stamp activity + wake if idle-suspended
+		return nil, netip.Addr{}, E.New("WireGuard is not ready yet")
 	}
 	packetConn, err := w.endpoint.ListenPacket(ctx, destination)
 	if err != nil {
