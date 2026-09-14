@@ -30,7 +30,6 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/debug"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
@@ -141,23 +140,14 @@ func (e *RealityClientConfig) ClientHandshake(ctx context.Context, conn net.Conn
 	uConfig.VerifyPeerCertificate = verifier.VerifyPeerCertificate
 	uConn := utls.UClient(conn, uConfig, e.uClient.id)
 	verifier.UConn = uConn
+	// lx: SPEC 083 — апстрим здесь вырезал X25519MLKEM768 из supported_groups
+	// и key_share (костыль под utls v1.7.2, где Ecdhe гибрида и чистого X25519
+	// не различались). XTLS/REALITY@8cdf7bf (Xray ≥ v26.9.8) отвергает
+	// ClientHello без гибридного шара — молча проксирует на dest, у нас это
+	// «reality verification failed». metacubex/utls ≥ 1.8 кладёт ключи
+	// раздельно (Ecdhe / MlkemEcdhe), фильтр больше не нужен: отпечаток
+	// шлёт то, что заложено в его спеке (Chrome — GREASE, MLKEM, X25519).
 	err := uConn.BuildHandshakeState()
-	if err != nil {
-		return nil, err
-	}
-	for _, extension := range uConn.Extensions {
-		if ce, ok := extension.(*utls.SupportedCurvesExtension); ok {
-			ce.Curves = common.Filter(ce.Curves, func(curveID utls.CurveID) bool {
-				return curveID != utls.X25519MLKEM768
-			})
-		}
-		if ks, ok := extension.(*utls.KeyShareExtension); ok {
-			ks.KeyShares = common.Filter(ks.KeyShares, func(share utls.KeyShare) bool {
-				return share.Group != utls.X25519MLKEM768
-			})
-		}
-	}
-	err = uConn.BuildHandshakeState()
 	if err != nil {
 		return nil, err
 	}
@@ -183,9 +173,13 @@ func (e *RealityClientConfig) ClientHandshake(ctx context.Context, conn net.Conn
 	}
 	binary.BigEndian.PutUint64(hello.SessionId, uint64(nowTime.Unix()))
 
-	hello.SessionId[0] = 1
-	hello.SessionId[1] = 8
-	hello.SessionId[2] = 1
+	// lx: SPEC 053 — Xray v26.7.11 (XTLS/Xray-core@af7eb68) включил
+	// minClientVer=26.3.27 по умолчанию. Апстримный `1, 8, 1` ниже порога:
+	// сервер не отдаёт ошибку, а молча проксирует на камуфляжный dest.
+	// Объявляем ровно минимум — сравнение там `>=`, выше не нужно.
+	hello.SessionId[0] = 26
+	hello.SessionId[1] = 3
+	hello.SessionId[2] = 27
 	binary.BigEndian.PutUint32(hello.SessionId[4:], uint32(time.Now().Unix()))
 	copy(hello.SessionId[8:], e.shortID[:])
 	if debug.Enabled {
@@ -199,7 +193,13 @@ func (e *RealityClientConfig) ClientHandshake(ctx context.Context, conn net.Conn
 	if keyShareKeys == nil {
 		return nil, E.New("nil KeyShareKeys")
 	}
+	// lx: SPEC 083 — AuthKey считается по тому же шару, что берёт сервер:
+	// чистый X25519, если он есть в ClientHello, иначе X25519-часть
+	// X25519MLKEM768 (порядок выбора XTLS/REALITY@8cdf7bf, как у Xray-клиента).
 	ecdheKey := keyShareKeys.Ecdhe
+	if ecdheKey == nil {
+		ecdheKey = keyShareKeys.MlkemEcdhe
+	}
 	if ecdheKey == nil {
 		return nil, E.New("nil ecdheKey")
 	}

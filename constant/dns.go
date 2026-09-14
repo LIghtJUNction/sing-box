@@ -30,6 +30,9 @@ const (
 	DNSTypeTailscale   = "tailscale"
 	DNSTypeOpenConnect = "openconnect"
 	DNSTypeOpenVPN     = "openvpn"
+	// lx:begin dns-group
+	DNSTypeGroup = "group"
+	// lx:end dns-group
 )
 
 const (

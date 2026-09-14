@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,14 +36,42 @@ type Endpoint struct {
 	allowedAddress []netip.Prefix
 	tunDevice      Device
 	returnDevice   *returnDeviceWrapper
-	device         atomic.Pointer[device.Device]
+	device         *device.Device
 	allowedIPs     *device.AllowedIPs
 	egressPool     *tun.UDPEgressPool
 	pause          pause.Manager
 	pauseCallback  *list.Element[pause.Callback]
-	stateAccess    sync.Mutex
-	suspended      atomic.Bool
-	networkPaused  bool
+	// lx: SPEC 071 — detached pause application. onPauseUpdated must never
+	// block inside the pause manager's lock; events apply asynchronously,
+	// serialized by pauseOpAccess, latest pauseSeq stamp wins. Close/Teardown
+	// bump the stamp under the same mutex so a queued application can never
+	// touch a device that is being shut down. pauseApplyHookForTest replaces
+	// the device side effect in unit tests (seam precedent: resumeErrHook).
+	pauseOpAccess         sync.Mutex
+	pauseSeq              atomic.Uint64
+	pauseApplyHookForTest func(int)
+	// lx: SPEC 020 — true while the protocol layer holds this device down for
+	// idle-suspend. onPauseUpdated must not Up() a suspended device: a
+	// screen-off/on or network pause/wake cycle would otherwise resurrect it
+	// behind the protocol state machine's back (started=false, idleAsleep
+	// unchanged), making it unsuspendable until restart.
+	suspended atomic.Bool
+	// lx: SPEC 020 level 3 — the recipe for rebuilding the tun device after a
+	// Teardown released it (Device/netstack objects are one-shot: their Close
+	// closes channels and runs under a sync.Once). inet4/inet6 are the port
+	// addresses cached from the device so PortAddresses() never has to touch a
+	// possibly-nil tunDevice.
+	deviceOptions DeviceOptions
+	inet4Address  netip.Addr
+	inet6Address  netip.Addr
+	// lx: SPEC 020 — test seam standing in for a device.Up() failure, which needs
+	// a real bind to reproduce. Nil in production.
+	resumeErrHook func() error
+}
+
+// SetResumeErrHookForTest injects a Resume failure. Test-only.
+func (e *Endpoint) SetResumeErrHookForTest(hook func() error) {
+	e.resumeErrHook = hook
 }
 
 func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
@@ -58,11 +87,27 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 	if options.ListenPort != 0 {
 		ipcConf += "\nlisten_port=" + F.ToString(options.ListenPort)
 	}
+	// lx:begin awg
+	// Append AmneziaWG 2.0 device-global obfuscation lines (jc=/h1=/i1=…) to the
+	// device IpcSet config. awgIpcLines is tag-gated: with `with_awg` it formats
+	// the params; without it, a non-empty AWG config returns an explicit error.
+	awgLines, err := awgIpcLines(options.AmneziaWG)
+	if err != nil {
+		return nil, err
+	}
+	ipcConf += awgLines
+	// lx:end awg
 	var peers []peerConfig
 	for peerIndex, rawPeer := range options.Peers {
+		// lx: awg — the keepalive is a spec string ("N" / "min-max" / "");
+		// the range form is AWG 3.x and tag-gated like the other AWG fields.
+		keepalive, err := awgKeepaliveSpec(rawPeer.PersistentKeepaliveInterval)
+		if err != nil {
+			return nil, E.Cause(err, "persistent_keepalive_interval for peer ", peerIndex)
+		}
 		peer := peerConfig{
 			allowedIPs: rawPeer.AllowedIPs,
-			keepalive:  rawPeer.PersistentKeepaliveInterval,
+			keepalive:  keepalive,
 		}
 		if rawPeer.Endpoint.Addr.IsValid() {
 			peer.endpoint = rawPeer.Endpoint.AddrPort()
@@ -103,9 +148,41 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 		return nil, err
 	}
 	allowedAddresses := allowedIPSet.Prefixes()
+	// lx:begin awg
+	// AmneziaWG's s4 prepends junk bytes to every transport (data) message, so an
+	// AWG endpoint needs a lower MTU than plain WireGuard (see docs-lx/lx-config.md
+	// §2). s3 pads only cookie-reply messages (device.paddings.cookie), never data
+	// packets, so it is NOT part of the per-transport overhead (SPEC 022 #8).
+	// awgJunk = the per-transport-packet overhead = s4.
+	awgJunk := options.AmneziaWG.S4
+	// lx:end awg
 	if options.MTU == 0 {
 		options.MTU = 1408
+		// lx: when AWG junk is active the plain 1408 default already overflows the
+		// path, so fall back to the recommended AWG client MTU instead of shipping
+		// (and then warning about) a value we picked ourselves.
+		if awgJunk > 0 {
+			options.MTU = 1280
+		}
 	}
+	// lx:begin awg
+	// Warn when an explicitly-set MTU is still too high for the junk overhead: the
+	// handshake succeeds but transport packets fail with EMSGSIZE ("sendmsg:
+	// message too long"). The path budget assumes a conservative 1492-byte (PPPoE)
+	// path; raw Ethernet is 1500.
+	if awgJunk > 0 {
+		const pathMTU = 1492
+		const wgOverhead = 28 + 32 // UDP/IP + WireGuard transport header
+		if budget := pathMTU - wgOverhead - int(awgJunk); int(options.MTU) > budget {
+			options.Logger.Warn(fmt.Sprintf(
+				"amneziawg: mtu %d may be too high for s4 junk (%d bytes); "+
+					"transport packets can exceed a %d-byte path and fail with "+
+					"\"message too long\". Consider mtu <= %d (or 1280). See docs-lx/lx-config.md",
+				options.MTU, awgJunk, pathMTU, budget,
+			))
+		}
+	}
+	// lx:end awg
 	deviceOptions := DeviceOptions{
 		Context:         options.Context,
 		Logger:          options.Logger,
@@ -134,8 +211,73 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 		allowedAddress: allowedAddresses,
 		tunDevice:      tunDevice,
 		returnDevice:   &returnDeviceWrapper{Device: tunDevice},
+		// lx: SPEC 020 teardown — keep the recipe so a torn-down endpoint can be
+		// rebuilt in place (the tun device and its netstack are one-shot objects).
+		deviceOptions: deviceOptions,
+		inet4Address:  tunDevice.Inet4Address(),
+		inet6Address:  tunDevice.Inet6Address(),
 	}, nil
 }
+
+// lx:begin idle-suspend
+// Teardown releases EVERYTHING this endpoint holds — the wireguard device AND
+// the tun device with its gVisor netstack (~5.9 MB) — while keeping the recipe
+// (options/peers/ipcConf) so Rebuild can bring it back. SPEC 020 level 3: the
+// tick calls it for an endpoint that has been asleep past lx_idle_teardown.
+// Idempotent; the endpoint stays flagged suspended (only a dial rebuilds it).
+func (e *Endpoint) Teardown() {
+	e.suspended.Store(true)
+	// lx: SPEC 071 — same shutdown guard as Close: invalidate queued pause
+	// applications and release the device under pauseOpAccess.
+	e.pauseOpAccess.Lock()
+	e.pauseSeq.Add(1)
+	if e.device != nil {
+		e.device.Down()
+		e.device.Close()
+		e.device = nil
+	}
+	e.pauseOpAccess.Unlock()
+	e.closeTunDevice()
+	e.allowedIPs = nil
+	if e.pauseCallback != nil {
+		e.pause.UnregisterCallback(e.pauseCallback)
+		e.pauseCallback = nil
+	}
+}
+
+// Rebuild recreates the tun device (and its netstack) after a Teardown, leaving
+// the caller to run Start again. Peers keep whatever endpoints were resolved
+// before the teardown, so a rebuild does not re-resolve unless a peer is
+// domain-based and was never resolved. lx: SPEC 020 level 3.
+func (e *Endpoint) Rebuild() error {
+	if e.tunDevice != nil {
+		return nil // never torn down (or already rebuilt)
+	}
+	tunDevice, err := NewDevice(e.deviceOptions)
+	if err != nil {
+		return E.Cause(err, "rebuild WireGuard device")
+	}
+	e.tunDevice = tunDevice
+	// Carry the attached L3 return path over to the fresh wrapper: sing-tun
+	// attached it once (AttachReturn) and will not re-attach after a rebuild it
+	// knows nothing about — dropping it would silently break the L3 downlink.
+	returnDevice := &returnDeviceWrapper{Device: tunDevice}
+	if previous := e.returnDevice.state.Load(); previous != nil {
+		returnDevice.state.Store(previous)
+	}
+	e.returnDevice = returnDevice
+	e.inet4Address = tunDevice.Inet4Address()
+	e.inet6Address = tunDevice.Inet6Address()
+	e.suspended.Store(false)
+	return nil
+}
+
+// TornDown reports whether the tun device is currently released (level 3).
+func (e *Endpoint) TornDown() bool {
+	return e.tunDevice == nil
+}
+
+// lx:end idle-suspend
 
 func (e *Endpoint) Start(postStart bool) error {
 	hasDomainPeer := common.Any(e.peers, func(peer peerConfig) bool {
@@ -163,12 +305,9 @@ func (e *Endpoint) Start(postStart bool) error {
 			recorder := powerManager.Recorder()
 			if recorder != nil {
 				attribution := &powerreport.Attribution{Endpoint: e.options.Tag}
-				counter := recorder.TrafficCounter(powerreport.TrafficEndpoint, e.options.Tag)
 				standardBind.SetIOActivityFuncs(func(size int) {
-					counter.CountIn(int64(size))
 					recorder.Touch(powerreport.DirectionInbound, size, attribution)
 				}, func(size int) {
-					counter.CountOut(int64(size))
 					recorder.Touch(powerreport.DirectionOutbound, size, attribution)
 				})
 			}
@@ -209,6 +348,11 @@ func (e *Endpoint) Start(postStart bool) error {
 		},
 	}
 	wgDevice := device.NewDevice(e.options.Context, e.returnDevice, bind, logger, e.options.Workers)
+	// lx: SPEC 041 — passive self-heal: on handshake give-up the device rebinds
+	// its socket (fresh ephemeral port unless the user pinned listen_port) and
+	// re-initiates, so a dead NAT/DPI flow entry cannot hold the endpoint in
+	// ERR until a manual reconnect.
+	wgDevice.SetGiveUpRebind(true, e.options.ListenPort == 0)
 	e.tunDevice.SetDevice(wgDevice)
 	var ipcConf strings.Builder
 	ipcConf.WriteString(e.ipcConf)
@@ -251,7 +395,7 @@ func (e *Endpoint) Start(postStart bool) error {
 			return endpoints, nil
 		})
 	}
-	e.device.Store(wgDevice)
+	e.device = wgDevice
 	e.pause = service.FromContext[pause.Manager](e.options.Context)
 	if e.pause != nil {
 		e.pauseCallback = e.pause.RegisterCallback(e.onPauseUpdated)
@@ -264,7 +408,11 @@ func (e *Endpoint) DialContext(ctx context.Context, network string, destination 
 	if !destination.Addr.IsValid() {
 		return nil, E.Cause(os.ErrInvalid, "invalid non-IP destination")
 	}
-	e.resume()
+	// lx: SPEC 020 level 3 — a torn-down endpoint has no tun device; the protocol
+	// layer rebuilds before dialing, so reaching here means a caller bypassed it.
+	if e.tunDevice == nil {
+		return nil, E.New("WireGuard endpoint is torn down")
+	}
 	return e.tunDevice.DialContext(ctx, network, destination)
 }
 
@@ -272,49 +420,10 @@ func (e *Endpoint) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	if !destination.Addr.IsValid() {
 		return nil, E.Cause(os.ErrInvalid, "invalid non-IP destination")
 	}
-	e.resume()
+	if e.tunDevice == nil { // lx: SPEC 020 level 3
+		return nil, E.New("WireGuard endpoint is torn down")
+	}
 	return e.tunDevice.ListenPacket(ctx, destination)
-}
-
-func (e *Endpoint) SetIdle(idle bool) {
-	e.stateAccess.Lock()
-	defer e.stateAccess.Unlock()
-	wgDevice := e.device.Load()
-	if wgDevice == nil {
-		return
-	}
-	if idle {
-		if e.suspended.Load() {
-			return
-		}
-		e.suspended.Store(true)
-		wgDevice.Down()
-	} else if e.options.System {
-		e.resumeLocked(wgDevice)
-	}
-}
-
-func (e *Endpoint) resume() {
-	if !e.suspended.Load() {
-		return
-	}
-	e.stateAccess.Lock()
-	defer e.stateAccess.Unlock()
-	wgDevice := e.device.Load()
-	if wgDevice == nil {
-		return
-	}
-	e.resumeLocked(wgDevice)
-}
-
-func (e *Endpoint) resumeLocked(wgDevice *device.Device) {
-	if !e.suspended.Load() {
-		return
-	}
-	e.suspended.Store(false)
-	if !e.networkPaused {
-		wgDevice.Up()
-	}
 }
 
 func (e *Endpoint) Close() error {
@@ -326,18 +435,106 @@ func (e *Endpoint) Close() error {
 		e.egressPool.Close()
 		e.egressPool = nil
 	}
-	e.stateAccess.Lock()
-	wgDevice := e.device.Swap(nil)
-	if wgDevice != nil {
-		wgDevice.Down()
-		wgDevice.Close()
-	}
-	e.stateAccess.Unlock()
-	if wgDevice != nil {
+	// lx: SPEC 071 — shut the device down under pauseOpAccess with the stamp
+	// bumped, so a queued pause application (now asynchronous) can never run
+	// against a device that is being closed. The synchronous callback got this
+	// guarantee implicitly from UnregisterCallback waiting out the in-flight
+	// emit; detaching the work moves the guarantee here.
+	e.pauseOpAccess.Lock()
+	defer e.pauseOpAccess.Unlock()
+	e.pauseSeq.Add(1)
+	if e.device != nil {
+		e.device.Down()
+		e.device.Close()
+		e.device = nil
 		return nil
 	}
-	return e.tunDevice.Close()
+	return e.closeTunDevice() // lx: SPEC 020 level 3 — see endpoint_close_lx.go
 }
+
+// lx:begin awg
+// Suspend brings the WireGuard device down without closing it, stopping the
+// (junk) handshake machinery. Used by the selector guard to neutralise an
+// AmneziaWG endpoint when a group it detours through switches to a WireGuard
+// member. Idempotent — a nil device (never started / already closed) is a no-op.
+//
+// SPEC 020 reuses Suspend for idle-suspend: device.Down() closes the UDP socket,
+// which makes RoutineReceiveIncoming exit and release its bufsArrs (the dominant
+// per-endpoint heap / GC-scan holder, ~8 MB per recv-worker). The trade-off is
+// that Down zeroes the crypto session, so Resume pays a fresh handshake.
+func (e *Endpoint) Suspend() {
+	e.suspended.Store(true)
+	if e.device != nil {
+		e.device.Down()
+	}
+}
+
+// Resume brings a Suspend'd device back up (device.Up()): re-opens the UDP
+// socket, re-spawns the recv-workers (re-allocating bufsArrs), and initiates a
+// fresh handshake on the next packet. Idempotent and nil-safe. Used by SPEC 020
+// idle-suspend to wake an endpoint lazily on the next dial through it.
+//
+// The error is returned, not swallowed: device.Up() runs BindUpdate as its first
+// step, so it fails whenever the UDP socket cannot be re-opened (a network
+// transition racing the wake, a protect callback refusing the fd). wireguard-go
+// then falls back to deviceStateDown, and a caller that assumed success would
+// leave the endpoint marked live over a device that is down — silently
+// black-holing every packet routed through it, with no path back up.
+func (e *Endpoint) Resume() error {
+	e.suspended.Store(false)
+	if e.resumeErrHook != nil { // tests only: stand in for a device.Up() failure
+		return e.resumeErrHook()
+	}
+	if e.device != nil {
+		return e.device.Up()
+	}
+	return nil
+}
+
+// ActiveTCPFlows reports the number of ESTABLISHED TCP connections inside the
+// device's gVisor stack (0 for the system-interface device, which has no
+// stack). lx: SPEC 020 — precise, keepalive-immune "live flows" gate for the
+// idle tick.
+func (e *Endpoint) ActiveTCPFlows() uint64 {
+	if counter, ok := e.tunDevice.(interface{ CurrentEstablished() uint64 }); ok {
+		return counter.CurrentEstablished()
+	}
+	return 0
+}
+
+// TransferTotals reports the sum of rx+tx bytes across all peers, read from the
+// device's IPC state. The SPEC 020 idle tick compares it between ticks to detect
+// traffic on established flows, which never re-enters the protocol dial path.
+// NOTE: WireGuard keepalive and rekey traffic moves these counters too — the
+// caller must apply a byte threshold, not a bare "changed" check, or a
+// persistent_keepalive peer would never be considered idle. Only called for
+// suspend candidates (unreachable + dial-idle), so the IpcGet string round-trip
+// is off the hot path. Returns 0 for a nil device.
+func (e *Endpoint) TransferTotals() uint64 {
+	dev := e.device
+	if dev == nil {
+		return 0
+	}
+	ipc, err := dev.IpcGet()
+	if err != nil {
+		return 0
+	}
+	var total uint64
+	for _, line := range strings.Split(ipc, "\n") {
+		if value, ok := strings.CutPrefix(line, "rx_bytes="); ok {
+			if n, err := strconv.ParseUint(value, 10, 64); err == nil {
+				total += n
+			}
+		} else if value, ok := strings.CutPrefix(line, "tx_bytes="); ok {
+			if n, err := strconv.ParseUint(value, 10, 64); err == nil {
+				total += n
+			}
+		}
+	}
+	return total
+}
+
+// lx:end awg
 
 func (e *Endpoint) Lookup(address netip.Addr) *device.Peer {
 	if e.allowedIPs == nil {
@@ -347,29 +544,68 @@ func (e *Endpoint) Lookup(address netip.Addr) *device.Peer {
 }
 
 func (e *Endpoint) BindUpdate() error {
-	wgDevice := e.device.Load()
-	if wgDevice == nil {
+	if e.device == nil {
 		return nil
 	}
-	return wgDevice.BindUpdate()
+	return e.device.BindUpdate()
+}
+
+// lx: SPEC 041 v2 — wake-nudge passthrough: rebind the device's socket now if
+// its session is provably dead (see device.RebindIfSessionStale). Nil-safe
+// over a torn-down endpoint (SPEC 020 level 3 releases the device).
+func (e *Endpoint) RebindIfSessionStale() bool {
+	wgDevice := e.device
+	if wgDevice == nil {
+		return false
+	}
+	return wgDevice.RebindIfSessionStale()
 }
 
 func (e *Endpoint) onPauseUpdated(event int) {
-	e.stateAccess.Lock()
-	defer e.stateAccess.Unlock()
-	wgDevice := e.device.Load()
-	if wgDevice == nil {
+	// lx: SPEC 071 — the pause manager invokes callbacks while still holding
+	// its own lock (sing service/pause), and Down()/Up() can block on device
+	// mutexes for as long as a bind close takes (field dump: 54 minutes behind
+	// a dead-detour dial). Blocking here therefore freezes pause/wake/network
+	// delivery for the whole process. Detach: apply asynchronously with
+	// latest-event-wins — pauseSeq stamps the event, and only the goroutine
+	// carrying the newest stamp applies under pauseOpAccess, so out-of-order
+	// scheduling cannot park the device in a stale state and a burst of
+	// pause/wake flips coalesces to its final state.
+	seq := e.pauseSeq.Add(1)
+	go func() {
+		e.pauseOpAccess.Lock()
+		defer e.pauseOpAccess.Unlock()
+		if e.pauseSeq.Load() != seq {
+			return // superseded by a newer event (or invalidated by Close/Teardown)
+		}
+		e.applyPauseEvent(event)
+	}()
+}
+
+// applyPauseEvent is the former synchronous body of onPauseUpdated. Runs only
+// under pauseOpAccess (lx: SPEC 071).
+func (e *Endpoint) applyPauseEvent(event int) {
+	if e.pauseApplyHookForTest != nil {
+		e.pauseApplyHookForTest(event)
+		return
+	}
+	// lx: SPEC 020 level 3 — a torn-down endpoint has no device at all; the
+	// callback is unregistered by Teardown, but a pause event already in flight
+	// must not nil-deref.
+	if e.device == nil {
 		return
 	}
 	switch event {
 	case pause.EventNetworkPause:
-		e.networkPaused = true
-		wgDevice.Down()
+		e.device.Down()
 	case pause.EventNetworkWake:
-		e.networkPaused = false
-		if !e.suspended.Load() {
-			wgDevice.Up()
+		// lx: SPEC 020/007 — a suspended device (idle-suspend or AWG guard) stays
+		// down through pause/wake cycles; the owning state machine wakes it
+		// (resumeOnDial) or keeps it down (guard) on its own terms.
+		if e.suspended.Load() {
+			return
 		}
+		e.device.Up()
 	}
 }
 
@@ -379,7 +615,7 @@ type peerConfig struct {
 	publicKeyHex    string
 	preSharedKeyHex string
 	allowedIPs      []netip.Prefix
-	keepalive       uint16
+	keepalive       string // lx: awg — canonical spec, "" = off
 	reserved        [3]uint8
 }
 
@@ -395,8 +631,8 @@ func (c peerConfig) GenerateIpcLines() string {
 	for _, allowedIP := range c.allowedIPs {
 		ipcLines.WriteString("\nallowed_ip=" + allowedIP.String())
 	}
-	if c.keepalive > 0 {
-		ipcLines.WriteString("\npersistent_keepalive_interval=" + F.ToString(c.keepalive))
+	if c.keepalive != "" {
+		ipcLines.WriteString("\npersistent_keepalive_interval=" + c.keepalive)
 	}
 	return ipcLines.String()
 }

@@ -12,6 +12,7 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/vless/encryption"
 	"github.com/sagernet/sing-box/transport/v2ray"
 	"github.com/sagernet/sing-vmess/packetaddr"
 	"github.com/sagernet/sing-vmess/vless"
@@ -45,6 +46,9 @@ type Outbound struct {
 	transport       adapter.V2RayClientTransport
 	packetAddr      bool
 	xudp            bool
+	// encryption is the VLESS post-quantum layer, nil unless `encryption` is
+	// configured. It wraps the dialed conn beneath the vless client (lx: SPEC 032).
+	encryption *encryption.ClientInstance
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.VLESSOutboundOptions) (adapter.Outbound, error) {
@@ -67,11 +71,21 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 			KTLSCompatible: common.PtrValueOrDefault(options.Transport).Type == "" &&
 				!common.PtrValueOrDefault(options.Multiplex).Enabled &&
 				options.Flow == "",
+			// lx: SPEC 060 — fragment the ClientHello by default when the leg is
+			// someone else's outbound (PMTU black hole behind it is invisible to us).
+			DialedThroughDetour: tls.DialedThroughDetour(options.DialerOptions),
 		})
 		if err != nil {
 			return nil, err
 		}
-		outbound.tlsDialer = tls.NewDialer(outboundDialer, outbound.tlsConfig)
+		// lx:begin tls-disabled-dialer
+		// NewClientWithOptions returns (nil, nil) for `"tls": {"enabled": false}`;
+		// an unconditional NewDialer here wraps that nil config and SIGSEGVs on the
+		// first handshake (SPEC 045). Same guard as vmess.
+		if outbound.tlsConfig != nil {
+			outbound.tlsDialer = tls.NewDialer(outboundDialer, outbound.tlsConfig)
+		}
+		// lx:end tls-disabled-dialer
 	}
 	if options.Transport != nil {
 		outbound.transport, err = v2ray.NewClientTransport(ctx, outbound.dialer, outbound.serverAddr, common.PtrValueOrDefault(options.Transport), outbound.tlsConfig)
@@ -90,6 +104,18 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 			outbound.xudp = true
 		default:
 			return nil, E.New("unknown packet encoding: ", *options.PacketEncoding)
+		}
+	}
+	// lx: SPEC 032 — set up the post-quantum encryption layer before the vless
+	// client, which is unaware of it.
+	if options.Encryption != "" && options.Encryption != "none" {
+		encryptionConfig, err := parseClientEncryption(options.Encryption)
+		if err != nil {
+			return nil, E.Cause(err, "parse encryption")
+		}
+		outbound.encryption = &encryption.ClientInstance{}
+		if err := outbound.encryption.Init(encryptionConfig.keys, encryptionConfig.xorMode, encryptionConfig.seconds, encryptionConfig.padding); err != nil {
+			return nil, E.Cause(err, "initialize encryption")
 		}
 	}
 	outbound.client, err = vless.NewClient(options.UUID, options.Flow, logger)
@@ -192,6 +218,10 @@ func (h *vlessDialer) DialContext(ctx context.Context, network string, destinati
 	if err != nil {
 		return nil, err
 	}
+	conn, err = h.wrapEncryption(ctx, conn)
+	if err != nil {
+		return nil, err
+	}
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
 		h.logger.InfoContext(ctx, "outbound connection to ", destination)
@@ -233,6 +263,10 @@ func (h *vlessDialer) ListenPacket(ctx context.Context, destination M.Socksaddr)
 	}
 	if err != nil {
 		common.Close(conn)
+		return nil, err
+	}
+	conn, err = h.wrapEncryption(ctx, conn)
+	if err != nil {
 		return nil, err
 	}
 	if h.xudp {
