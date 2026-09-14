@@ -4,9 +4,6 @@ set -euo pipefail
 git fetch --no-tags origin testing
 base=origin/testing
 
-# Restore shared core/control-plane files that the extended fork changed for its
-# own manager/provider/server product. MagicNet keeps the current testing/lx
-# implementations for these surfaces.
 git restore --source="$base" --staged --worktree -- \
   .fpm_openwrt Dockerfile \
   adapter/endpoint/manager.go adapter/experimental.go adapter/inbound.go adapter/inbound/registry.go \
@@ -25,8 +22,6 @@ git restore --source="$base" --staged --worktree -- \
   protocol/trojan/inbound.go protocol/trojan/outbound.go protocol/tuic/inbound.go \
   protocol/tun/inbound.go protocol/vmess/inbound.go protocol/vmess/outbound.go
 
-# Drop files/directories that exist only for the other fork's release,
-# manager/provider/database stack or duplicate WARP/MASQUE implementations.
 rm -rf \
   .goreleaser.yaml DONATE.md codeberg-release.sh \
   adapter/provider.go cmd/internal/admin_panel_pack \
@@ -39,27 +34,30 @@ rm -rf \
 
 git add -A
 
-# Keep the link parser, but translate extended's old range objects to the
-# canonical lx XHTTP schema already merged into testing.
 python3 - <<'PY'
 from pathlib import Path
+import re
 p = Path('parser/link/vless.go')
 s = p.read_text()
-repls = {
-'''if r, err := common.ParseXHTTPRange(val); err == nil {\n\t\t\t\t\t\tTransport.XHTTPOptions.Xmux.CMaxReuseTimes = r\n\t\t\t\t\t}''': '''Transport.XHTTPOptions.Xmux.CMaxReuseTimes = option.XmuxRange(val)''',
-'''if r, err := common.ParseXHTTPRange(val); err == nil {\n\t\t\t\t\t\tTransport.XHTTPOptions.Xmux.MaxConcurrency = r\n\t\t\t\t\t}''': '''Transport.XHTTPOptions.Xmux.MaxConcurrency = option.XmuxRange(val)''',
-'''if r, err := common.ParseXHTTPRange(val); err == nil {\n\t\t\t\t\t\tTransport.XHTTPOptions.Xmux.MaxConnections = r\n\t\t\t\t\t}''': '''Transport.XHTTPOptions.Xmux.MaxConnections = option.XmuxRange(val)''',
-'''if r, err := common.ParseXHTTPRange(val); err == nil {\n\t\t\t\t\t\tTransport.XHTTPOptions.Xmux.HMaxRequestTimes = r\n\t\t\t\t\t}''': '''Transport.XHTTPOptions.Xmux.HMaxRequestTimes = option.XmuxRange(val)''',
-'''if r, err := common.ParseXHTTPRange(val); err == nil {\n\t\t\t\t\t\tTransport.XHTTPOptions.Xmux.HMaxReusableSecs = r\n\t\t\t\t\t}''': '''Transport.XHTTPOptions.Xmux.HMaxReusableSecs = option.XmuxRange(val)''',
-'''if r, err := common.ParseXHTTPRange(val); err == nil {\n\t\t\t\t\tTransport.XHTTPOptions.XPaddingBytes = r\n\t\t\t\t}''': '''Transport.XHTTPOptions.XPaddingBytes = val''',
-'''if r, err := common.ParseXHTTPRange(val); err == nil {\n\t\t\t\t\tTransport.XHTTPOptions.ScMaxEachPostBytes = &r\n\t\t\t\t}''': '''Transport.XHTTPOptions.ScMaxEachPostBytes = val''',
-'''if r, err := common.ParseXHTTPRange(val); err == nil {\n\t\t\t\t\tTransport.XHTTPOptions.ScMinPostsIntervalMs = &r\n\t\t\t\t}''': '''Transport.XHTTPOptions.ScMinPostsIntervalMs = val''',
-'''if r, err := common.ParseXHTTPRange(val); err == nil {\n\t\t\t\t\tTransport.XHTTPOptions.ScStreamUpServerSecs = &r\n\t\t\t\t}''': '''Transport.XHTTPOptions.ScStreamUpServerSecs = val''',
+
+xmux_fields = {
+    'CMaxReuseTimes', 'MaxConcurrency', 'MaxConnections',
+    'HMaxRequestTimes', 'HMaxReusableSecs',
 }
-for old, new in repls.items():
-    if old not in s:
-        raise SystemExit('missing XHTTP parser compatibility block')
-    s = s.replace(old, new, 1)
+for field in xmux_fields:
+    pattern = rf'if r, err := common\.ParseXHTTPRange\(val\); err == nil \{{\s*Transport\.XHTTPOptions\.Xmux\.{field} = r\s*\}}'
+    s, n = re.subn(pattern, f'Transport.XHTTPOptions.Xmux.{field} = option.XmuxRange(val)', s, count=1)
+    if n != 1:
+        raise SystemExit(f'missing XHTTP parser compatibility block: {field}')
+
+for field in ('XPaddingBytes', 'ScMaxEachPostBytes', 'ScMinPostsIntervalMs', 'ScStreamUpServerSecs'):
+    pattern = rf'if r, err := common\.ParseXHTTPRange\(val\); err == nil \{{\s*Transport\.XHTTPOptions\.{field} = &?r\s*\}}'
+    s, n = re.subn(pattern, f'Transport.XHTTPOptions.{field} = val', s, count=1)
+    if n != 1:
+        raise SystemExit(f'missing XHTTP parser compatibility block: {field}')
+
+if 'common.ParseXHTTPRange' in s:
+    raise SystemExit('unconverted XHTTP range parser remains')
 p.write_text(s)
 PY
 
