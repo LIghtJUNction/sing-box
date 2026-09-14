@@ -61,17 +61,26 @@ jobs:
           # for lx-owned feature seams so -Xours cannot leave half a feature merged.
           git restore --source="$before" --staged --worktree -- .github Makefile README.md release || true
           [ ! -f README.ru.md ] || git restore --source="$before" --staged --worktree -- README.ru.md || true
-          git checkout lx/lx -- protocol/group/urltest.go transport/wireguard/endpoint.go
+          git checkout lx/lx -- protocol/group/urltest.go transport/wireguard/endpoint.go transport/wireguard/port.go
 
-          # Adapt sticky process identity to the current ConnectionOwner API.
+          # Adapt lx process identity fields to the current ConnectionOwner API.
           python3 - <<'PY'
           from pathlib import Path
+
           p = Path('protocol/group/urltest_balance_lx.go')
           s = p.read_text()
           old = '''\t\tif len(metadata.ProcessInfo.AndroidPackageNames) > 0 {\n\t\t\treturn metadata.ProcessInfo.AndroidPackageNames[0]\n\t\t}\n\t\treturn metadata.ProcessInfo.ProcessPath'''
           new = '''\t\tif len(metadata.ProcessInfo.PackageNames) > 0 {\n\t\t\treturn metadata.ProcessInfo.PackageNames[0]\n\t\t}\n\t\tif len(metadata.ProcessInfo.ProcessPaths) > 0 {\n\t\t\treturn metadata.ProcessInfo.ProcessPaths[0]\n\t\t}\n\t\treturn ""'''
           if old not in s:
               raise SystemExit('sticky process compatibility block not found')
+          p.write_text(s.replace(old, new))
+
+          p = Path('daemon/started_service_command_lx.go')
+          s = p.read_text()
+          old = '''\tif event.ProcessInfo != nil {\n\t\tproto.ProcessInfo = &ProcessInfo{\n\t\t\tProcessId:    event.ProcessInfo.ProcessID,\n\t\t\tUserId:       event.ProcessInfo.UserId,\n\t\t\tUserName:     event.ProcessInfo.UserName,\n\t\t\tProcessPath:  event.ProcessInfo.ProcessPath,\n\t\t\tPackageNames: event.ProcessInfo.AndroidPackageNames,\n\t\t}\n\t}'''
+          new = '''\tif event.ProcessInfo != nil {\n\t\tprocessPath := ""\n\t\tif len(event.ProcessInfo.ProcessPaths) > 0 {\n\t\t\tprocessPath = event.ProcessInfo.ProcessPaths[0]\n\t\t}\n\t\tproto.ProcessInfo = &ProcessInfo{\n\t\t\tProcessId:    event.ProcessInfo.ProcessID,\n\t\t\tUserId:       event.ProcessInfo.UserId,\n\t\t\tUserName:     event.ProcessInfo.UserName,\n\t\t\tProcessPath:  processPath,\n\t\t\tPackageNames: event.ProcessInfo.PackageNames,\n\t\t}\n\t}'''
+          if old not in s:
+              raise SystemExit('daemon process compatibility block not found')
           p.write_text(s.replace(old, new))
           PY
 
@@ -99,9 +108,7 @@ jobs:
           		dependencies = append(dependencies, localOptions.DomainResolver.Server)
           	}
           	var references []string
-          	if localOptions.Detour != "" {
-          		references = []string{localOptions.Detour}
-          	}
+          	if localOptions.Detour != "" { references = []string{localOptions.Detour} }
           	return TransportAdapter{transportType: transportType, transportTag: transportTag, dependencies: dependencies, references: references, outboundTag: localOptions.Detour}
           }
 
@@ -111,9 +118,7 @@ jobs:
           		dependencies = append(dependencies, remoteOptions.DomainResolver.Server)
           	}
           	var references []string
-          	if remoteOptions.Detour != "" {
-          		references = []string{remoteOptions.Detour}
-          	}
+          	if remoteOptions.Detour != "" { references = []string{remoteOptions.Detour} }
           	return TransportAdapter{transportType: transportType, transportTag: transportTag, dependencies: dependencies, references: references, outboundTag: remoteOptions.Detour}
           }
 
@@ -144,7 +149,7 @@ jobs:
           git config -f .gitmodules --remove-section submodule.submodules/gvisor || true
           git rm -f --cached submodules/sing-tun submodules/gvisor 2>/dev/null || true
           rm -rf submodules/sing-tun submodules/gvisor
-          git add .gitmodules release/DEFAULT_BUILD_TAGS_OTHERS protocol/group/urltest.go protocol/group/urltest_balance_lx.go transport/wireguard/endpoint.go dns/transport_adapter.go
+          git add -A
           git status --short
 
       - name: Initialize integrated submodules
