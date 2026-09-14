@@ -7,7 +7,8 @@ on:
       - integrate/network-20260914
     paths:
       - .github/workflows/integrate-lx-network.yml
-      - common/interrupt/group.go
+      - scripts/integrate-lx-network.sh
+      - common/interrupt/**
       - protocol/wireguard/ondemand_compat_magicnet.go
       - transport/wireguard/ondemand_compat_magicnet.go
 
@@ -15,7 +16,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: integrate-lx-network-v2
+  group: integrate-lx-network-v3
   cancel-in-progress: true
 
 jobs:
@@ -34,152 +35,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Fetch thin fork
-        run: |
-          git remote add lx https://github.com/Leadaxe/sing-box-lx.git
-          git fetch --no-tags lx lx
-
-      - name: Squash-integrate lx feature tree
-        shell: bash
-        run: |
-          set -euo pipefail
-          before="$(git rev-parse HEAD)"
-          set +e
-          git merge --squash -Xours lx/lx
-          rc=$?
-          set -e
-          if [ "$rc" -ne 0 ]; then
-            mapfile -t conflicts < <(git diff --name-only --diff-filter=U)
-            for f in "${conflicts[@]}"; do
-              if git cat-file -e ":2:$f" 2>/dev/null; then
-                git checkout --ours -- "$f"
-              else
-                git checkout --theirs -- "$f"
-              fi
-              git add -- "$f"
-            done
-          fi
-
-          git restore --source="$before" --staged --worktree -- .github Makefile README.md release || true
-          [ ! -f README.ru.md ] || git restore --source="$before" --staged --worktree -- README.ru.md || true
-          git checkout lx/lx -- \
-            protocol/group/urltest.go \
-            protocol/wireguard/endpoint.go \
-            option/wireguard.go \
-            transport/wireguard/endpoint.go \
-            transport/wireguard/endpoint_options.go \
-            transport/wireguard/port.go
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path('protocol/group/urltest_balance_lx.go')
-          s = p.read_text()
-          old = '''\t\tif len(metadata.ProcessInfo.AndroidPackageNames) > 0 {\n\t\t\treturn metadata.ProcessInfo.AndroidPackageNames[0]\n\t\t}\n\t\treturn metadata.ProcessInfo.ProcessPath'''
-          new = '''\t\tif len(metadata.ProcessInfo.PackageNames) > 0 {\n\t\t\treturn metadata.ProcessInfo.PackageNames[0]\n\t\t}\n\t\tif len(metadata.ProcessInfo.ProcessPaths) > 0 {\n\t\t\treturn metadata.ProcessInfo.ProcessPaths[0]\n\t\t}\n\t\treturn ""'''
-          if old not in s:
-              raise SystemExit('sticky process compatibility block not found')
-          p.write_text(s.replace(old, new))
-
-          p = Path('daemon/started_service_command_lx.go')
-          s = p.read_text()
-          old = '''\tif event.ProcessInfo != nil {\n\t\tproto.ProcessInfo = &ProcessInfo{\n\t\t\tProcessId:    event.ProcessInfo.ProcessID,\n\t\t\tUserId:       event.ProcessInfo.UserId,\n\t\t\tUserName:     event.ProcessInfo.UserName,\n\t\t\tProcessPath:  event.ProcessInfo.ProcessPath,\n\t\t\tPackageNames: event.ProcessInfo.AndroidPackageNames,\n\t\t}\n\t}'''
-          new = '''\tif event.ProcessInfo != nil {\n\t\tprocessPath := ""\n\t\tif len(event.ProcessInfo.ProcessPaths) > 0 {\n\t\t\tprocessPath = event.ProcessInfo.ProcessPaths[0]\n\t\t}\n\t\tproto.ProcessInfo = &ProcessInfo{\n\t\t\tProcessId:    event.ProcessInfo.ProcessID,\n\t\t\tUserId:       event.ProcessInfo.UserId,\n\t\t\tUserName:     event.ProcessInfo.UserName,\n\t\t\tProcessPath:  processPath,\n\t\t\tPackageNames: event.ProcessInfo.PackageNames,\n\t\t}\n\t}'''
-          if old not in s:
-              raise SystemExit('daemon process compatibility block not found')
-          p.write_text(s.replace(old, new))
-
-          p = Path('option/wireguard.go')
-          s = p.read_text()
-          needle = '\tWorkers      int                              `json:"workers,omitempty"`\n'
-          if needle not in s:
-              raise SystemExit('WireGuard workers field not found')
-          s = s.replace(needle, needle + '\tOnDemand     bool                             `json:"on_demand,omitempty"`\n', 1)
-          p.write_text(s)
-
-          p = Path('protocol/wireguard/endpoint.go')
-          s = p.read_text()
-          marker = '\t_ adapter.InterfaceUpdateListener     = (*Endpoint)(nil)\n'
-          if marker not in s:
-              raise SystemExit('WireGuard interface marker not found')
-          s = s.replace(marker, marker + '\t_ adapter.OnDemandEndpoint            = (*Endpoint)(nil)\n', 1)
-          marker = '\tendpoint       *wireguard.Endpoint\n'
-          if marker not in s:
-              raise SystemExit('WireGuard endpoint field not found')
-          s = s.replace(marker, marker + '\tonDemand       bool\n', 1)
-          marker = '\t\tlocalAddresses: options.Address,\n'
-          if marker not in s:
-              raise SystemExit('WireGuard constructor marker not found')
-          s = s.replace(marker, marker + '\t\tonDemand:       options.OnDemand,\n', 1)
-          marker = '\nfunc (w *Endpoint) Start(stage adapter.StartStage) error {'
-          if marker not in s:
-              raise SystemExit('WireGuard Start marker not found')
-          s = s.replace(marker, '\nfunc (w *Endpoint) OnDemand() bool {\n\treturn w.onDemand\n}\n' + marker, 1)
-          p.write_text(s)
-          PY
-
-          cat > dns/transport_adapter.go <<'EOF'
-          package dns
-
-          import "github.com/sagernet/sing-box/option"
-
-          type TransportAdapter struct {
-          	transportType string
-          	transportTag  string
-          	dependencies  []string
-          	references    []string
-          	outboundTag   string
-          }
-
-          func NewTransportAdapter(transportType string, transportTag string, dependencies []string) TransportAdapter {
-          	return TransportAdapter{transportType: transportType, transportTag: transportTag, dependencies: dependencies}
-          }
-
-          func NewTransportAdapterWithLocalOptions(transportType string, transportTag string, localOptions option.LocalDNSServerOptions) TransportAdapter {
-          	var dependencies []string
-          	if localOptions.DomainResolver != nil && localOptions.DomainResolver.Server != "" {
-          		dependencies = append(dependencies, localOptions.DomainResolver.Server)
-          	}
-          	var references []string
-          	if localOptions.Detour != "" { references = []string{localOptions.Detour} }
-          	return TransportAdapter{transportType: transportType, transportTag: transportTag, dependencies: dependencies, references: references, outboundTag: localOptions.Detour}
-          }
-
-          func NewTransportAdapterWithRemoteOptions(transportType string, transportTag string, remoteOptions option.RemoteDNSServerOptions) TransportAdapter {
-          	var dependencies []string
-          	if remoteOptions.DomainResolver != nil && remoteOptions.DomainResolver.Server != "" {
-          		dependencies = append(dependencies, remoteOptions.DomainResolver.Server)
-          	}
-          	var references []string
-          	if remoteOptions.Detour != "" { references = []string{remoteOptions.Detour} }
-          	return TransportAdapter{transportType: transportType, transportTag: transportTag, dependencies: dependencies, references: references, outboundTag: remoteOptions.Detour}
-          }
-
-          func (a *TransportAdapter) Type() string { return a.transportType }
-          func (a *TransportAdapter) Tag() string { return a.transportTag }
-          func (a *TransportAdapter) Dependencies() []string { return a.dependencies }
-          func (a *TransportAdapter) References() []string { return a.references }
-          func (a *TransportAdapter) OutboundTag() string { return a.outboundTag }
-          EOF
-
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('release/DEFAULT_BUILD_TAGS_OTHERS')
-          tags = [x.strip() for x in p.read_text().strip().split(',') if x.strip()]
-          for tag in ('with_xhttp','with_awg','with_lx_command','with_lxd','with_lx_chain','with_lx_idle_suspend'):
-              if tag not in tags:
-                  tags.append(tag)
-          p.write_text(','.join(tags) + '\n')
-          PY
-
-          git config -f .gitmodules submodule.submodules/wireguard-go.path submodules/wireguard-go
-          git config -f .gitmodules submodule.submodules/wireguard-go.url https://github.com/Leadaxe/wireguard-go-awg2-lx
-          git config -f .gitmodules submodule.submodules/wireguard-go.branch lx-awg2-v005
-          git config -f .gitmodules --remove-section submodule.submodules/sing-tun || true
-          git config -f .gitmodules --remove-section submodule.submodules/gvisor || true
-          git rm -f --cached submodules/sing-tun submodules/gvisor 2>/dev/null || true
-          rm -rf submodules/sing-tun submodules/gvisor
-          git add -A
+      - name: Integrate thin-fork feature tree
+        run: bash scripts/integrate-lx-network.sh
 
       - name: Initialize AWG runtime submodule
         run: |
@@ -191,7 +48,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Normalize current dependencies
+      - name: Preserve current network dependencies
         run: |
           go mod edit -dropreplace=github.com/sagernet/sing-tun || true
           go mod edit -dropreplace=github.com/sagernet/gvisor || true
@@ -200,25 +57,25 @@ jobs:
           go mod tidy
           git add go.mod go.sum
 
-      - name: Build all integrated capabilities
+      - name: Build Linux and Android arm64
         run: |
           TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
           CGO_ENABLED=0 go build -trimpath -tags "$TAGS" -ldflags "-checklinkname=0" ./cmd/sing-box
           CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -trimpath -tags "$TAGS" -ldflags "-checklinkname=0" ./cmd/sing-box
 
-      - name: Test integrated network packages with bounds
+      - name: Test integrated network packages
         shell: bash
         run: |
           set -euo pipefail
           TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
-          for p in ./transport/v2rayxhttp ./transport/masque ./protocol/wireguard ./protocol/group ./dns/transport/group ./protocol/chain; do
+          for p in ./common/interrupt ./transport/v2rayxhttp ./transport/masque ./protocol/wireguard ./protocol/group ./dns/transport/group ./protocol/chain; do
             [ -d "${p#./}" ] || continue
             echo "::group::$p"
             timeout 150s env CGO_ENABLED=0 go test -count=1 -timeout=120s -tags "$TAGS" "$p"
             echo "::endgroup::"
           done
 
-      - name: Commit and push verified integration
+      - name: Commit verified integration
         run: |
           git add -A
           if git diff --cached --quiet; then
