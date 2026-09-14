@@ -78,6 +78,10 @@ func (d *dashboard) start() error {
 	if err != nil && !os.IsNotExist(err) {
 		return E.Cause(err, "read dashboard directory")
 	}
+	if d.loadState() == dashboardUserProvided {
+		d.logger.Info("dashboard: serving user-provided files at ", d.path, ", auto-update disabled")
+		return nil
+	}
 	transport, err := d.resolveTransport()
 	if err != nil {
 		return E.Cause(err, "create dashboard http client")
