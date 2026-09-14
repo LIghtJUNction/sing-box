@@ -29,9 +29,15 @@ func newRuleActionRouteOptions(options option.RawRouteOptionsActionOptions) (Rul
 	if err != nil {
 		return RuleActionRouteOptions{}, err
 	}
+	var overrideGateway *netip.Addr
+	if options.OverrideGateway != "" {
+		parsed := M.ParseAddr(options.OverrideGateway)
+		overrideGateway = &parsed
+	}
 	return RuleActionRouteOptions{
 		OverrideAddress:           M.ParseSocksaddrHostPort(options.OverrideAddress, 0),
 		OverridePort:              options.OverridePort,
+		OverrideGateway:           overrideGateway,
 		NetworkStrategy:           (*C.NetworkStrategy)(options.NetworkStrategy),
 		FallbackDelay:             time.Duration(options.FallbackDelay),
 		UDPDisableDomainUnmapping: options.UDPDisableDomainUnmapping,
@@ -225,6 +231,7 @@ func (r *RuleActionBypass) String() string {
 type RuleActionRouteOptions struct {
 	OverrideAddress           M.Socksaddr
 	OverridePort              uint16
+	OverrideGateway           *netip.Addr
 	NetworkStrategy           *C.NetworkStrategy
 	NetworkType               []C.InterfaceType
 	FallbackNetworkType       []C.InterfaceType
@@ -254,6 +261,9 @@ func (r *RuleActionRouteOptions) Descriptions() []string {
 	}
 	if r.OverridePort > 0 {
 		descriptions = append(descriptions, F.ToString("override-port=", r.OverridePort))
+	}
+	if r.OverrideGateway != nil {
+		descriptions = append(descriptions, F.ToString("override-gateway=", r.OverrideGateway.String()))
 	}
 	if r.NetworkStrategy != nil {
 		descriptions = append(descriptions, F.ToString("network-strategy=", r.NetworkStrategy))

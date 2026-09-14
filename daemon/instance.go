@@ -136,6 +136,15 @@ func (s *StartedService) newInstance(ctx context.Context, profileContent string,
 		cancel()
 		return nil, err
 	}
+	experimentalOptions := common.PtrValueOrDefault(options.Experimental)
+	if experimentalOptions.UnifiedDelay != nil && experimentalOptions.UnifiedDelay.Enabled {
+		ctx = urltest.ContextWithIsUnifiedDelay(ctx)
+	}
+	i := &Instance{
+		ctx:                   ctx,
+		cancel:                cancel,
+		urlTestHistoryStorage: urlTestHistoryStorage,
+	}
 	i.instance = boxInstance
 	i.connectionManager = service.FromContext[adapter.ConnectionManager](ctx)
 	i.clashMode = service.PtrFromContext[clashmode.Manager](ctx)

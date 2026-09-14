@@ -572,7 +572,7 @@ func (t *Endpoint) watchState() {
 					return true
 				}
 				reportedAuthURL = authURL
-				t.logger.Info("Waiting for authentication: ", authURL)
+				t.logger.Notice("Waiting for authentication: ", authURL)
 				if t.platformInterface != nil && t.platformInterface.UsePlatformNotification() {
 					err := t.platformInterface.SendNotification(&adapter.Notification{
 						Identifier: "tailscale-authentication",
