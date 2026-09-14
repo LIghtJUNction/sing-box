@@ -1,0 +1,46 @@
+name: Clean extended dataplane tree
+
+on:
+  push:
+    branches:
+      - integrate/extended-network-v2-20260914
+    paths:
+      - .github/workflows/cleanup-extended-network-v2.yml
+      - scripts/cleanup-extended-network-v2.sh
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cleanup-extended-network-v2
+  cancel-in-progress: true
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: integrate/extended-network-v2-20260914
+          fetch-depth: 0
+          submodules: false
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Clean to dataplane-only diff
+        run: bash scripts/cleanup-extended-network-v2.sh
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+          cache: true
+      - name: Normalize module graph
+        run: |
+          go mod tidy
+          git add -A
+      - name: Commit cleaned tree
+        run: |
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "chore: trim extended integration to dataplane features"
+          git push origin HEAD:integrate/extended-network-v2-20260914
