@@ -1,0 +1,136 @@
+name: Integrate sing-box-lx network features
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - integrate/network-20260914
+    paths:
+      - .github/workflows/integrate-lx-network.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: integrate-lx-network
+  cancel-in-progress: false
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: integrate/network-20260914
+          fetch-depth: 0
+          submodules: false
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch thin fork
+        run: |
+          git remote add lx https://github.com/Leadaxe/sing-box-lx.git
+          git fetch --no-tags lx lx
+
+      - name: Squash-integrate lx feature tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          before="$(git rev-parse HEAD)"
+          set +e
+          git merge --squash -Xours lx/lx
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            mapfile -t conflicts < <(git diff --name-only --diff-filter=U)
+            for f in "${conflicts[@]}"; do
+              if git cat-file -e ":2:$f" 2>/dev/null; then
+                git checkout --ours -- "$f"
+              else
+                git checkout --theirs -- "$f"
+              fi
+              git add -- "$f"
+            done
+          fi
+
+          # Keep MagicNet's existing packaging/CI/release policy.  The integration
+          # takes the fork's runtime code, options, protocol implementations and
+          # required dependencies/submodules, not its project branding/release files.
+          git restore --source="$before" --staged --worktree -- .github Makefile README.md release || true
+          [ ! -f README.ru.md ] || git restore --source="$before" --staged --worktree -- README.ru.md || true
+
+          # Enable every lx runtime capability in the normal MagicNet binary.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('release/DEFAULT_BUILD_TAGS_OTHERS')
+          tags = [x.strip() for x in p.read_text().strip().split(',') if x.strip()]
+          for tag in ('with_xhttp','with_awg','with_lx_command','with_lxd','with_lx_chain','with_lx_idle_suspend'):
+              if tag not in tags:
+                  tags.append(tag)
+          p.write_text(','.join(tags) + '\n')
+          PY
+
+          # Preserve MagicNet client submodules and add lx runtime submodules needed
+          # by AWG/MASQUE/gVisor integrations.
+          git config -f .gitmodules submodule.submodules/wireguard-go.path submodules/wireguard-go
+          git config -f .gitmodules submodule.submodules/wireguard-go.url https://github.com/Leadaxe/wireguard-go-awg2-lx
+          git config -f .gitmodules submodule.submodules/wireguard-go.branch lx-awg2-v005
+          git config -f .gitmodules submodule.submodules/sing-tun.path submodules/sing-tun
+          git config -f .gitmodules submodule.submodules/sing-tun.url https://github.com/Leadaxe/sing-tun-lx
+          git config -f .gitmodules submodule.submodules/sing-tun.branch lx
+          git config -f .gitmodules submodule.submodules/gvisor.path submodules/gvisor
+          git config -f .gitmodules submodule.submodules/gvisor.url https://github.com/Leadaxe/gvisor-lx
+          git config -f .gitmodules submodule.submodules/gvisor.branch lx
+          git add .gitmodules release/DEFAULT_BUILD_TAGS_OTHERS
+
+          if git diff --cached --quiet; then
+            echo "No lx changes to integrate"
+            exit 0
+          fi
+          git status --short
+
+      - name: Initialize integrated submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --recursive submodules/wireguard-go submodules/sing-tun submodules/gvisor
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Normalize dependencies
+        run: |
+          go mod tidy
+          git add go.mod go.sum
+
+      - name: Build all integrated capabilities
+        run: |
+          TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+          CGO_ENABLED=0 go build -trimpath -tags "$TAGS" -ldflags "-checklinkname=0" ./cmd/sing-box
+
+      - name: Test integrated network transports
+        shell: bash
+        run: |
+          TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+          packages=()
+          for p in ./transport/v2rayxhttp ./transport/masque ./protocol/wireguard; do
+            [ -d "${p#./}" ] && packages+=("$p")
+          done
+          if [ "${#packages[@]}" -gt 0 ]; then
+            CGO_ENABLED=0 go test -tags "$TAGS" "${packages[@]}"
+          fi
+
+      - name: Commit and push verified integration
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+            exit 0
+          fi
+          git commit -m "feat: integrate sing-box-lx network capabilities"
+          git push origin HEAD:integrate/network-20260914
