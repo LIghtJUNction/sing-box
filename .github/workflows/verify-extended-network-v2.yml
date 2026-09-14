@@ -1,0 +1,58 @@
+name: Verify extended dataplane
+
+on:
+  push:
+    branches:
+      - integrate/extended-network-v2-20260914
+    paths:
+      - .github/workflows/verify-extended-network-v2.yml
+      - common/**
+      - option/**
+      - protocol/**
+      - dns/**
+      - include/**
+      - transport/**
+      - go.mod
+      - go.sum
+      - release/DEFAULT_BUILD_TAGS_OTHERS
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-extended-network-v2
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: integrate/extended-network-v2-20260914
+          submodules: false
+      - name: Initialize AWG submodule
+        run: git submodule update --init --recursive submodules/wireguard-go
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+          cache: true
+      - name: Verify module graph
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: Build Linux and Android arm64
+        run: |
+          TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+          CGO_ENABLED=0 go build -trimpath -tags "$TAGS" -ldflags "-checklinkname=0" ./cmd/sing-box
+          CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -trimpath -tags "$TAGS" -ldflags "-checklinkname=0" ./cmd/sing-box
+      - name: Test unique extended packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+          for p in ./protocol/bond ./protocol/failover ./protocol/mieru ./protocol/vpn ./protocol/limiter/bandwidth ./protocol/limiter/connection ./protocol/limiter/rate ./protocol/limiter/traffic ./dns/transport/fallback; do
+            [ -d "${p#./}" ] || continue
+            timeout 120s env CGO_ENABLED=0 go test -count=1 -timeout=90s -tags "$TAGS" "$p"
+          done
