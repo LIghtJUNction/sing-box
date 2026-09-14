@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	runtimeDebug "runtime/debug"
 	"sort"
-	"strings"
 	"syscall"
 	"time"
 
@@ -69,6 +68,11 @@ func readConfigAt(path string) (*OptionsEntry, error) {
 	}, nil
 }
 
+func isConfigFile(name string) bool {
+	extension := filepath.Ext(name)
+	return extension == ".json" || extension == ".jsonc"
+}
+
 func readConfig() ([]*OptionsEntry, error) {
 	var optionsList []*OptionsEntry
 	for _, path := range configPaths {
@@ -84,7 +88,7 @@ func readConfig() ([]*OptionsEntry, error) {
 			return nil, E.Cause(err, "read config directory at ", directory)
 		}
 		for _, entry := range entries {
-			if !strings.HasSuffix(entry.Name(), ".json") || entry.IsDir() {
+			if !isConfigFile(entry.Name()) || entry.IsDir() {
 				continue
 			}
 			optionsEntry, err := readConfigAt(filepath.Join(directory, entry.Name()))
