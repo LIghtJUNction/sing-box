@@ -2,7 +2,6 @@ package common
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -66,13 +65,4 @@ func DecodeBase64URLSafe(content string) (string, error) {
 		return content, nil
 	}
 	return string(result), nil
-}
-
-func ParseXHTTPRange(value string) (badoption.Range[int], error) {
-	result := badoption.Range[int]{}
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return result, err
-	}
-	return result, result.UnmarshalJSON(encoded)
 }
