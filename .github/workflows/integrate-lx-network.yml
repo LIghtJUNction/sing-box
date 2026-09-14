@@ -14,13 +14,13 @@ permissions:
   contents: write
 
 concurrency:
-  group: integrate-lx-network
-  cancel-in-progress: false
+  group: integrate-lx-network-v2
+  cancel-in-progress: true
 
 jobs:
   integrate:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -179,9 +179,8 @@ jobs:
           git rm -f --cached submodules/sing-tun submodules/gvisor 2>/dev/null || true
           rm -rf submodules/sing-tun submodules/gvisor
           git add -A
-          git status --short
 
-      - name: Initialize integrated submodules
+      - name: Initialize AWG runtime submodule
         run: |
           git submodule sync --recursive
           git submodule update --init --recursive submodules/wireguard-go
@@ -191,7 +190,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Normalize dependencies
+      - name: Normalize current dependencies
         run: |
           go mod edit -dropreplace=github.com/sagernet/sing-tun || true
           go mod edit -dropreplace=github.com/sagernet/gvisor || true
@@ -204,18 +203,19 @@ jobs:
         run: |
           TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
           CGO_ENABLED=0 go build -trimpath -tags "$TAGS" -ldflags "-checklinkname=0" ./cmd/sing-box
+          CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -trimpath -tags "$TAGS" -ldflags "-checklinkname=0" ./cmd/sing-box
 
-      - name: Test integrated network transports
+      - name: Test integrated network packages with bounds
         shell: bash
         run: |
+          set -euo pipefail
           TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
-          packages=()
           for p in ./transport/v2rayxhttp ./transport/masque ./protocol/wireguard ./protocol/group ./dns/transport/group ./protocol/chain; do
-            [ -d "${p#./}" ] && packages+=("$p")
+            [ -d "${p#./}" ] || continue
+            echo "::group::$p"
+            timeout 150s env CGO_ENABLED=0 go test -count=1 -timeout=120s -tags "$TAGS" "$p"
+            echo "::endgroup::"
           done
-          if [ "${#packages[@]}" -gt 0 ]; then
-            CGO_ENABLED=0 go test -tags "$TAGS" "${packages[@]}"
-          fi
 
       - name: Commit and push verified integration
         run: |
