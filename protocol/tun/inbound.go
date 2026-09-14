@@ -551,8 +551,8 @@ func (t *Inbound) InterfaceUpdated(ctx context.Context) {
 
 func (t *Inbound) Close() error {
 	return common.Close(
-		tunStack,
-		tunIf,
+		t.tunStack,
+		t.tunIf,
 		t.autoRedirect,
 	)
 }
