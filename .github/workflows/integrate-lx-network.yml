@@ -7,6 +7,8 @@ on:
       - integrate/network-20260914
     paths:
       - .github/workflows/integrate-lx-network.yml
+      - protocol/wireguard/ondemand_compat_magicnet.go
+      - transport/wireguard/ondemand_compat_magicnet.go
 
 permissions:
   contents: write
@@ -57,8 +59,6 @@ jobs:
             done
           fi
 
-          # Keep this fork's release/CI policy, but take complete implementations
-          # for lx-owned feature seams so -Xours cannot leave half a feature merged.
           git restore --source="$before" --staged --worktree -- .github Makefile README.md release || true
           [ ! -f README.ru.md ] || git restore --source="$before" --staged --worktree -- README.ru.md || true
           git checkout lx/lx -- \
@@ -69,7 +69,6 @@ jobs:
             transport/wireguard/endpoint_options.go \
             transport/wireguard/port.go
 
-          # Adapt lx-owned code to APIs added on the current testing branch.
           python3 - <<'PY'
           from pathlib import Path
 
@@ -89,7 +88,6 @@ jobs:
               raise SystemExit('daemon process compatibility block not found')
           p.write_text(s.replace(old, new))
 
-          # Keep testing's on-demand endpoint contract while using lx's AWG schema.
           p = Path('option/wireguard.go')
           s = p.read_text()
           needle = '\tWorkers      int                              `json:"workers,omitempty"`\n'
@@ -119,7 +117,6 @@ jobs:
           p.write_text(s)
           PY
 
-          # Merge lx DNS observability with the current References() contract.
           cat > dns/transport_adapter.go <<'EOF'
           package dns
 
@@ -164,7 +161,6 @@ jobs:
           func (a *TransportAdapter) OutboundTag() string { return a.outboundTag }
           EOF
 
-          # Enable all lx client/runtime capabilities in the normal binary.
           python3 - <<'PY'
           from pathlib import Path
           p = Path('release/DEFAULT_BUILD_TAGS_OTHERS')
@@ -175,8 +171,6 @@ jobs:
           p.write_text(','.join(tags) + '\n')
           PY
 
-          # AWG needs the custom WireGuard runtime. Keep the current September
-          # sing-tun/gVisor packages, which carry newer Android/auto-redirect APIs.
           git config -f .gitmodules submodule.submodules/wireguard-go.path submodules/wireguard-go
           git config -f .gitmodules submodule.submodules/wireguard-go.url https://github.com/Leadaxe/wireguard-go-awg2-lx
           git config -f .gitmodules submodule.submodules/wireguard-go.branch lx-awg2-v005
