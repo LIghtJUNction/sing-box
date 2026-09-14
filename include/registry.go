@@ -14,6 +14,7 @@ import (
 	"github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/dns/transport"
 	"github.com/sagernet/sing-box/dns/transport/fakeip"
+	"github.com/sagernet/sing-box/dns/transport/fallback"
 	// lx:begin dns-group
 	dnsgroup "github.com/sagernet/sing-box/dns/transport/group"
 	// lx:end dns-group
@@ -24,12 +25,20 @@ import (
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/protocol/anytls"
 	"github.com/sagernet/sing-box/protocol/block"
+	"github.com/sagernet/sing-box/protocol/bond"
 	"github.com/sagernet/sing-box/protocol/bridge"
 	"github.com/sagernet/sing-box/protocol/direct"
+	"github.com/sagernet/sing-box/protocol/failover"
 	"github.com/sagernet/sing-box/protocol/group"
 	"github.com/sagernet/sing-box/protocol/http"
+	"github.com/sagernet/sing-box/protocol/limiter/bandwidth"
+	"github.com/sagernet/sing-box/protocol/limiter/connection"
+	"github.com/sagernet/sing-box/protocol/limiter/rate"
+	"github.com/sagernet/sing-box/protocol/limiter/traffic"
+	"github.com/sagernet/sing-box/protocol/mieru"
 	"github.com/sagernet/sing-box/protocol/mixed"
 	"github.com/sagernet/sing-box/protocol/naive"
+	"github.com/sagernet/sing-box/protocol/parser"
 	"github.com/sagernet/sing-box/protocol/redirect"
 	"github.com/sagernet/sing-box/protocol/shadowsocks"
 	"github.com/sagernet/sing-box/protocol/shadowtls"
@@ -41,6 +50,7 @@ import (
 	"github.com/sagernet/sing-box/protocol/tun"
 	"github.com/sagernet/sing-box/protocol/vless"
 	"github.com/sagernet/sing-box/protocol/vmess"
+	"github.com/sagernet/sing-box/protocol/vpn"
 	"github.com/sagernet/sing-box/service/api"
 	originca "github.com/sagernet/sing-box/service/origin_ca"
 	"github.com/sagernet/sing-box/service/resolved"
@@ -73,6 +83,13 @@ func InboundRegistry() *inbound.Registry {
 	shadowtls.RegisterInbound(registry)
 	vless.RegisterInbound(registry)
 	anytls.RegisterInbound(registry)
+	mieru.RegisterInbound(registry)
+	bond.RegisterInbound(registry)
+	failover.RegisterInbound(registry)
+	registerTrustTunnelInbound(registry)
+	registerMTProxyInbound(registry)
+	registerSudokuInbound(registry)
+	registerCallInbound(registry)
 
 	registerQUICInbounds(registry)
 	registerCloudflaredInbound(registry)
@@ -90,6 +107,7 @@ func OutboundRegistry() *outbound.Registry {
 	block.RegisterOutbound(registry)
 
 	group.RegisterSelector(registry)
+	group.RegisterFallback(registry)
 	group.RegisterURLTest(registry)
 	// lx:begin chain
 	registerChainOutbound(registry)
@@ -107,6 +125,17 @@ func OutboundRegistry() *outbound.Registry {
 	shadowtls.RegisterOutbound(registry)
 	vless.RegisterOutbound(registry)
 	anytls.RegisterOutbound(registry)
+	mieru.RegisterOutbound(registry)
+	bond.RegisterOutbound(registry)
+	failover.RegisterOutbound(registry)
+	registerTrustTunnelOutbound(registry)
+	bandwidth.RegisterOutbound(registry)
+	connection.RegisterOutbound(registry)
+	traffic.RegisterOutbound(registry)
+	rate.RegisterOutbound(registry)
+	parser.RegisterOutbound(registry)
+	registerSudokuOutbound(registry)
+	registerCallOutbound(registry)
 
 	registerQUICOutbounds(registry)
 	registerStubForRemovedOutbounds(registry)
@@ -118,6 +147,8 @@ func EndpointRegistry() *endpoint.Registry {
 	registry := endpoint.NewRegistry()
 
 	registerWireGuardEndpoint(registry)
+	vpn.RegisterServerEndpoint(registry)
+	vpn.RegisterClientEndpoint(registry)
 	registerOpenConnectEndpoint(registry)
 	registerOpenVPNEndpoints(registry)
 	registerTailscaleEndpoint(registry)
@@ -132,10 +163,12 @@ func DNSTransportRegistry() *dns.TransportRegistry {
 	transport.RegisterUDP(registry)
 	transport.RegisterTLS(registry)
 	transport.RegisterHTTPS(registry)
+	transport.RegisterSDNS(registry)
 	hosts.RegisterTransport(registry)
 	local.RegisterTransport(registry)
 	mdns.RegisterTransport(registry)
 	fakeip.RegisterTransport(registry)
+	fallback.RegisterTransport(registry)
 	resolved.RegisterTransport(registry)
 	// lx:begin dns-group
 	dnsgroup.RegisterTransport(registry)
