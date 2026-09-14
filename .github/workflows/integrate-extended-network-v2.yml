@@ -32,13 +32,17 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
       - name: Integrate extended dataplane
         run: bash scripts/integrate-extended-network-v2.sh
+      - name: Prune excluded control-plane hooks
+        run: |
+          rm -f include/profiler.go include/profiler_stub.go
+          git add -A
       - name: Initialize AWG submodule
         run: |
           git submodule sync --recursive
           git submodule update --init --recursive submodules/wireguard-go
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.26.8"
           cache: true
       - name: Keep current network dependencies
         run: |
