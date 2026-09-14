@@ -61,9 +61,15 @@ jobs:
           # for lx-owned feature seams so -Xours cannot leave half a feature merged.
           git restore --source="$before" --staged --worktree -- .github Makefile README.md release || true
           [ ! -f README.ru.md ] || git restore --source="$before" --staged --worktree -- README.ru.md || true
-          git checkout lx/lx -- protocol/group/urltest.go transport/wireguard/endpoint.go transport/wireguard/port.go
+          git checkout lx/lx -- \
+            protocol/group/urltest.go \
+            protocol/wireguard/endpoint.go \
+            option/wireguard.go \
+            transport/wireguard/endpoint.go \
+            transport/wireguard/endpoint_options.go \
+            transport/wireguard/port.go
 
-          # Adapt lx process identity fields to the current ConnectionOwner API.
+          # Adapt lx-owned code to APIs added on the current testing branch.
           python3 - <<'PY'
           from pathlib import Path
 
@@ -82,6 +88,35 @@ jobs:
           if old not in s:
               raise SystemExit('daemon process compatibility block not found')
           p.write_text(s.replace(old, new))
+
+          # Keep testing's on-demand endpoint contract while using lx's AWG schema.
+          p = Path('option/wireguard.go')
+          s = p.read_text()
+          needle = '\tWorkers      int                              `json:"workers,omitempty"`\n'
+          if needle not in s:
+              raise SystemExit('WireGuard workers field not found')
+          s = s.replace(needle, needle + '\tOnDemand     bool                             `json:"on_demand,omitempty"`\n', 1)
+          p.write_text(s)
+
+          p = Path('protocol/wireguard/endpoint.go')
+          s = p.read_text()
+          marker = '\t_ adapter.InterfaceUpdateListener     = (*Endpoint)(nil)\n'
+          if marker not in s:
+              raise SystemExit('WireGuard interface marker not found')
+          s = s.replace(marker, marker + '\t_ adapter.OnDemandEndpoint            = (*Endpoint)(nil)\n', 1)
+          marker = '\tendpoint       *wireguard.Endpoint\n'
+          if marker not in s:
+              raise SystemExit('WireGuard endpoint field not found')
+          s = s.replace(marker, marker + '\tonDemand       bool\n', 1)
+          marker = '\t\tlocalAddresses: options.Address,\n'
+          if marker not in s:
+              raise SystemExit('WireGuard constructor marker not found')
+          s = s.replace(marker, marker + '\t\tonDemand:       options.OnDemand,\n', 1)
+          marker = '\nfunc (w *Endpoint) Start(stage adapter.StartStage) error {'
+          if marker not in s:
+              raise SystemExit('WireGuard Start marker not found')
+          s = s.replace(marker, '\nfunc (w *Endpoint) OnDemand() bool {\n\treturn w.onDemand\n}\n' + marker, 1)
+          p.write_text(s)
           PY
 
           # Merge lx DNS observability with the current References() contract.
