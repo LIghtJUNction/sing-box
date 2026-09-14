@@ -43,6 +43,10 @@ func Info(args ...any) {
 	std.Info(args...)
 }
 
+func Notice(args ...any) {
+	std.Notice(args...)
+}
+
 func Warn(args ...any) {
 	std.Warn(args...)
 }
@@ -69,6 +73,10 @@ func DebugContext(ctx context.Context, args ...any) {
 
 func InfoContext(ctx context.Context, args ...any) {
 	std.InfoContext(ctx, args...)
+}
+
+func NoticeContext(ctx context.Context, args ...any) {
+	std.NoticeContext(ctx, args...)
 }
 
 func WarnContext(ctx context.Context, args ...any) {

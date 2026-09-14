@@ -41,8 +41,10 @@ type Router struct {
 	dnsTransport      adapter.DNSTransportManager
 	connection        adapter.ConnectionManager
 	network           adapter.NetworkManager
+	defaultOutbound   adapter.Outbound
 	httpClientManager adapter.HTTPClientManager
 	rules             []adapter.Rule
+	final             string
 	needFindProcess   bool
 	needFindNeighbor  bool
 	leaseFiles        []string

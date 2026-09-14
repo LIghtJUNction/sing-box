@@ -180,6 +180,8 @@ type RawRouteOptionsActionOptions struct {
 	OverrideAddress string `json:"override_address,omitempty"`
 	OverridePort    uint16 `json:"override_port,omitempty"`
 
+	OverrideGateway string `json:"override_gateway,omitempty"`
+
 	NetworkStrategy *NetworkStrategy `json:"network_strategy,omitempty"`
 	FallbackDelay   uint32           `json:"fallback_delay,omitempty"`
 

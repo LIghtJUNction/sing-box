@@ -28,6 +28,8 @@ const (
 	DNSTypeDHCP        = "dhcp"
 	DNSTypeMDNS        = "mdns"
 	DNSTypeTailscale   = "tailscale"
+	DNSTypeSDNS        = "sdns"
+	DNSTypeFallback    = "fallback"
 	DNSTypeOpenConnect = "openconnect"
 	DNSTypeOpenVPN     = "openvpn"
 	// lx:begin dns-group

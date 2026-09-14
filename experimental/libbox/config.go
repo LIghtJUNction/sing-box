@@ -36,7 +36,7 @@ func baseContext(platformInterface PlatformInterface) context.Context {
 	}
 	ctx := context.Background()
 	ctx = filemanager.WithDefault(ctx, sWorkingPath, sTempPath, sUserID, sGroupID)
-	return box.Context(ctx, include.InboundRegistry(), include.OutboundRegistry(), include.EndpointRegistry(), dnsRegistry, include.ServiceRegistry(), include.CertificateProviderRegistry())
+	return box.Context(ctx, include.InboundRegistry(), include.OutboundRegistry(), include.EndpointRegistry(), include.ProviderRegistry(), dnsRegistry, include.ServiceRegistry(), include.CertificateProviderRegistry())
 }
 
 func parseConfig(ctx context.Context, configContent string) (option.Options, error) {
@@ -78,6 +78,10 @@ func (s *platformInterfaceStub) UsePlatformAutoDetectInterfaceControl() bool {
 
 func (s *platformInterfaceStub) AutoDetectInterfaceControl(fd int) error {
 	return nil
+}
+
+func (s *platformInterfaceStub) BindInterfaceControl(fd int, interfaceName string) error {
+	return os.ErrInvalid
 }
 
 func (s *platformInterfaceStub) UsePlatformInterface() bool {

@@ -65,6 +65,10 @@ func (p *windowsPlatformInterface) AutoDetectInterfaceControl(fd int) error {
 	return os.ErrInvalid
 }
 
+func (p *windowsPlatformInterface) BindInterfaceControl(fd int, interfaceName string) error {
+	return os.ErrInvalid
+}
+
 func (p *windowsPlatformInterface) UsePlatformInterface() bool {
 	return false
 }
