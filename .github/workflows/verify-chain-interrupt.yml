@@ -1,0 +1,34 @@
+name: Verify chain interrupt fix
+
+on:
+  push:
+    branches:
+      - integrate/network-20260914
+    paths:
+      - .github/workflows/verify-chain-interrupt.yml
+      - common/interrupt/**
+      - protocol/chain/**
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: integrate/network-20260914
+          submodules: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Initialize AWG runtime submodule
+        run: git submodule update --init --recursive submodules/wireguard-go
+      - name: Test interrupt and chain
+        run: |
+          TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+          timeout 120s env CGO_ENABLED=0 go test -count=1 -timeout=90s -tags "$TAGS" ./common/interrupt
+          timeout 150s env CGO_ENABLED=0 go test -count=1 -timeout=120s -tags "$TAGS" ./protocol/chain
