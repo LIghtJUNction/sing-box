@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 
 	"github.com/sagernet/sing-box/cmd/internal/build_shared"
@@ -41,6 +42,9 @@ func main() {
 	common.Must(json.NewDecoder(versionFile).Decode(&metadata))
 	common.Must(versionFile.Close())
 	newGoVersion := runtime.Version()
+	if match := regexp.MustCompile(`^go\d+\.\d+(?:\.\d+)?`).FindString(newGoVersion); match != "" {
+		newGoVersion = match
+	}
 	versionUpdated := metadata.Version != newVersion
 	goVersionUpdated := metadata.GoVersion != newGoVersion
 	if !(versionUpdated || goVersionUpdated) {
