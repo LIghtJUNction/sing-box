@@ -57,12 +57,74 @@ jobs:
             done
           fi
 
-          # Keep MagicNet's existing packaging/CI/release policy. The integration
-          # takes runtime code/options/protocols rather than lx branding/release files.
+          # Keep this fork's release/CI policy, but take complete implementations
+          # for lx-owned feature seams so -Xours cannot leave half a feature merged.
           git restore --source="$before" --staged --worktree -- .github Makefile README.md release || true
           [ ! -f README.ru.md ] || git restore --source="$before" --staged --worktree -- README.ru.md || true
+          git checkout lx/lx -- protocol/group/urltest.go transport/wireguard/endpoint.go
 
-          # Enable all lx client/runtime capabilities in the normal MagicNet binary.
+          # Adapt sticky process identity to the current ConnectionOwner API.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('protocol/group/urltest_balance_lx.go')
+          s = p.read_text()
+          old = '''\t\tif len(metadata.ProcessInfo.AndroidPackageNames) > 0 {\n\t\t\treturn metadata.ProcessInfo.AndroidPackageNames[0]\n\t\t}\n\t\treturn metadata.ProcessInfo.ProcessPath'''
+          new = '''\t\tif len(metadata.ProcessInfo.PackageNames) > 0 {\n\t\t\treturn metadata.ProcessInfo.PackageNames[0]\n\t\t}\n\t\tif len(metadata.ProcessInfo.ProcessPaths) > 0 {\n\t\t\treturn metadata.ProcessInfo.ProcessPaths[0]\n\t\t}\n\t\treturn ""'''
+          if old not in s:
+              raise SystemExit('sticky process compatibility block not found')
+          p.write_text(s.replace(old, new))
+          PY
+
+          # Merge lx DNS observability with the current References() contract.
+          cat > dns/transport_adapter.go <<'EOF'
+          package dns
+
+          import "github.com/sagernet/sing-box/option"
+
+          type TransportAdapter struct {
+          	transportType string
+          	transportTag  string
+          	dependencies  []string
+          	references    []string
+          	outboundTag   string
+          }
+
+          func NewTransportAdapter(transportType string, transportTag string, dependencies []string) TransportAdapter {
+          	return TransportAdapter{transportType: transportType, transportTag: transportTag, dependencies: dependencies}
+          }
+
+          func NewTransportAdapterWithLocalOptions(transportType string, transportTag string, localOptions option.LocalDNSServerOptions) TransportAdapter {
+          	var dependencies []string
+          	if localOptions.DomainResolver != nil && localOptions.DomainResolver.Server != "" {
+          		dependencies = append(dependencies, localOptions.DomainResolver.Server)
+          	}
+          	var references []string
+          	if localOptions.Detour != "" {
+          		references = []string{localOptions.Detour}
+          	}
+          	return TransportAdapter{transportType: transportType, transportTag: transportTag, dependencies: dependencies, references: references, outboundTag: localOptions.Detour}
+          }
+
+          func NewTransportAdapterWithRemoteOptions(transportType string, transportTag string, remoteOptions option.RemoteDNSServerOptions) TransportAdapter {
+          	var dependencies []string
+          	if remoteOptions.DomainResolver != nil && remoteOptions.DomainResolver.Server != "" {
+          		dependencies = append(dependencies, remoteOptions.DomainResolver.Server)
+          	}
+          	var references []string
+          	if remoteOptions.Detour != "" {
+          		references = []string{remoteOptions.Detour}
+          	}
+          	return TransportAdapter{transportType: transportType, transportTag: transportTag, dependencies: dependencies, references: references, outboundTag: remoteOptions.Detour}
+          }
+
+          func (a *TransportAdapter) Type() string { return a.transportType }
+          func (a *TransportAdapter) Tag() string { return a.transportTag }
+          func (a *TransportAdapter) Dependencies() []string { return a.dependencies }
+          func (a *TransportAdapter) References() []string { return a.references }
+          func (a *TransportAdapter) OutboundTag() string { return a.outboundTag }
+          EOF
+
+          # Enable all lx client/runtime capabilities in the normal binary.
           python3 - <<'PY'
           from pathlib import Path
           p = Path('release/DEFAULT_BUILD_TAGS_OTHERS')
@@ -73,9 +135,8 @@ jobs:
           p.write_text(','.join(tags) + '\n')
           PY
 
-          # AWG requires the lx WireGuard runtime. Keep this fork's newer sing-tun
-          # and gVisor instead of downgrading them to lx's August snapshots: current
-          # sing-box uses APIs such as tun.AutoRedirectHandler introduced afterwards.
+          # AWG needs the custom WireGuard runtime. Keep the current September
+          # sing-tun/gVisor packages, which carry newer Android/auto-redirect APIs.
           git config -f .gitmodules submodule.submodules/wireguard-go.path submodules/wireguard-go
           git config -f .gitmodules submodule.submodules/wireguard-go.url https://github.com/Leadaxe/wireguard-go-awg2-lx
           git config -f .gitmodules submodule.submodules/wireguard-go.branch lx-awg2-v005
@@ -83,12 +144,7 @@ jobs:
           git config -f .gitmodules --remove-section submodule.submodules/gvisor || true
           git rm -f --cached submodules/sing-tun submodules/gvisor 2>/dev/null || true
           rm -rf submodules/sing-tun submodules/gvisor
-          git add .gitmodules release/DEFAULT_BUILD_TAGS_OTHERS
-
-          if git diff --cached --quiet; then
-            echo "No lx changes to integrate"
-            exit 0
-          fi
+          git add .gitmodules release/DEFAULT_BUILD_TAGS_OTHERS protocol/group/urltest.go protocol/group/urltest_balance_lx.go transport/wireguard/endpoint.go dns/transport_adapter.go
           git status --short
 
       - name: Initialize integrated submodules
@@ -103,7 +159,6 @@ jobs:
 
       - name: Normalize dependencies
         run: |
-          # Preserve dependency/API level already used by LIghtJUNction/testing.
           go mod edit -dropreplace=github.com/sagernet/sing-tun || true
           go mod edit -dropreplace=github.com/sagernet/gvisor || true
           go mod edit -require=github.com/sagernet/sing-tun@v0.9.2-0.20260909144315-8e1fb85d5b15
