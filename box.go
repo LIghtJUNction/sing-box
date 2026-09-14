@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"runtime/debug"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -17,6 +18,7 @@ import (
 	boxService "github.com/sagernet/sing-box/adapter/service"
 	"github.com/sagernet/sing-box/common/certificate"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/dnstrack"
 	"github.com/sagernet/sing-box/common/httpclient"
 	"github.com/sagernet/sing-box/common/netns"
 	"github.com/sagernet/sing-box/common/taskmonitor"
@@ -64,6 +66,7 @@ type Box struct {
 	httpClientService   adapter.LifecycleService
 	internalService     []adapter.LifecycleService
 	done                chan struct{}
+	closed              atomic.Bool // lx: SPEC 070 — elects the single Close winner
 }
 
 type Options struct {
@@ -242,6 +245,8 @@ func New(options Options) (*Box, error) {
 	httpClientService := adapter.LifecycleService(httpClientManager)
 	router := route.NewRouter(ctx, logFactory, routeOptions, dnsOptions)
 	service.MustRegister[adapter.Router](ctx, router)
+	service.MustRegister[adapter.ReachabilityInvalidator](ctx, router) // lx: SPEC 020 — event points invalidate the reachable cache
+	service.MustRegister[adapter.ReachabilityReporter](ctx, router)    // lx: SPEC 020 — urltest gates probes on group reachability
 	err = router.Initialize(routeOptions.Rules, routeOptions.RuleSet)
 	if err != nil {
 		return nil, E.Cause(err, "initialize router")
@@ -251,6 +256,14 @@ func New(options Options) (*Box, error) {
 		service.MustRegisterPtr(ctx, trafficManager)
 		router.AppendTracker(trafficManager)
 		internalServices = append(internalServices, trafficManager)
+		// lx: SPEC 018 — DNS query stream. Registered as *dnstrack.Manager so the dns
+		// client (service.PtrFromContext in dns/client_log.go — pairs with MustRegisterPtr;
+		// FromContext[*T] keys on **T and silently returns nil, the §180 dead-stream bug)
+		// emits structured, process-attributed query events the command server exposes as
+		// SubscribeDNSQueries.
+		dnsQueryManager := dnstrack.NewManager()
+		service.MustRegisterPtr(ctx, dnsQueryManager)
+		internalServices = append(internalServices, dnsQueryManager)
 		var clashDefaultMode string
 		if experimentalOptions.ClashAPI != nil {
 			clashDefaultMode = experimentalOptions.ClashAPI.DefaultMode
@@ -609,11 +622,26 @@ func (s *Box) start() error {
 }
 
 func (s *Box) Close() error {
-	select {
-	case <-s.done:
+	// lx: SPEC 070 — Close must be idempotent under CONCURRENT callers, not
+	// just repeated ones: a user stop racing Box.Start's own error-path
+	// s.Close() (routine once a component refuses to start mid-close) could
+	// have both takers pass the old select-then-close(done) pair and panic
+	// with "close of closed channel". CAS elects exactly one closer; done
+	// still closes for any future readers.
+	if !s.closed.CompareAndSwap(false, true) {
 		return os.ErrClosed
-	default:
-		close(s.done)
+	}
+	close(s.done)
+	// lx: SPEC 030 — fast shutdown. Stop the idle/urltest tick and close every
+	// WG/AWG UDP socket BEFORE the endpoint manager runs its close pass. Without
+	// this, endpoints are torn down while the tick is still issuing wakes: each
+	// Endpoint.Close blocks on resumeMu behind an in-flight ping-wake doing a
+	// full device rebuild + handshake (~0.5–5s each), summed serially over N
+	// endpoints — the 10s+ Android stop hang. Quiescing here removes that
+	// contention and unblocks every receive worker's ReadFrom up front, so the
+	// close pass is bounded by teardown, not by wakes.
+	if s.router != nil {
+		s.router.QuiesceForShutdown()
 	}
 	var err error
 	if s.debugHTTPServer != nil {

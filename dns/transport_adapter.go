@@ -1,22 +1,17 @@
 package dns
 
-import (
-	"github.com/sagernet/sing-box/option"
-)
+import "github.com/sagernet/sing-box/option"
 
 type TransportAdapter struct {
 	transportType string
 	transportTag  string
 	dependencies  []string
 	references    []string
+	outboundTag   string
 }
 
 func NewTransportAdapter(transportType string, transportTag string, dependencies []string) TransportAdapter {
-	return TransportAdapter{
-		transportType: transportType,
-		transportTag:  transportTag,
-		dependencies:  dependencies,
-	}
+	return TransportAdapter{transportType: transportType, transportTag: transportTag, dependencies: dependencies}
 }
 
 func NewTransportAdapterWithLocalOptions(transportType string, transportTag string, localOptions option.LocalDNSServerOptions) TransportAdapter {
@@ -28,12 +23,7 @@ func NewTransportAdapterWithLocalOptions(transportType string, transportTag stri
 	if localOptions.Detour != "" {
 		references = []string{localOptions.Detour}
 	}
-	return TransportAdapter{
-		transportType: transportType,
-		transportTag:  transportTag,
-		dependencies:  dependencies,
-		references:    references,
-	}
+	return TransportAdapter{transportType: transportType, transportTag: transportTag, dependencies: dependencies, references: references, outboundTag: localOptions.Detour}
 }
 
 func NewTransportAdapterWithRemoteOptions(transportType string, transportTag string, remoteOptions option.RemoteDNSServerOptions) TransportAdapter {
@@ -45,26 +35,11 @@ func NewTransportAdapterWithRemoteOptions(transportType string, transportTag str
 	if remoteOptions.Detour != "" {
 		references = []string{remoteOptions.Detour}
 	}
-	return TransportAdapter{
-		transportType: transportType,
-		transportTag:  transportTag,
-		dependencies:  dependencies,
-		references:    references,
-	}
+	return TransportAdapter{transportType: transportType, transportTag: transportTag, dependencies: dependencies, references: references, outboundTag: remoteOptions.Detour}
 }
 
-func (a *TransportAdapter) Type() string {
-	return a.transportType
-}
-
-func (a *TransportAdapter) Tag() string {
-	return a.transportTag
-}
-
-func (a *TransportAdapter) Dependencies() []string {
-	return a.dependencies
-}
-
-func (a *TransportAdapter) References() []string {
-	return a.references
-}
+func (a *TransportAdapter) Type() string           { return a.transportType }
+func (a *TransportAdapter) Tag() string            { return a.transportTag }
+func (a *TransportAdapter) Dependencies() []string { return a.dependencies }
+func (a *TransportAdapter) References() []string   { return a.references }
+func (a *TransportAdapter) OutboundTag() string    { return a.outboundTag }

@@ -101,12 +101,13 @@ type Endpoint struct {
 	onReconfigHook    wgengine.ReconfigListener
 	sshReconfigHook   wgengine.ReconfigListener
 
-	cfg           *wgcfg.Config
-	routerCfg     *router.Config
-	dnsCfg        *tsDNS.Config
-	routeDomains  common.TypedValue[map[string]bool]
-	routeSuffixes common.TypedValue[[]string]
-	searchDomains atomic.Bool
+	cfg                *wgcfg.Config
+	routerCfg          *router.Config
+	dnsCfg             *tsDNS.Config
+	routeDomains       common.TypedValue[map[string]bool]
+	routeSuffixes      common.TypedValue[[]string]
+	searchDomains      atomic.Bool
+	magicHostsUnrouted atomic.Bool // lx
 
 	acceptRoutes               bool
 	exitNode                   string
@@ -956,7 +957,12 @@ func (t *Endpoint) DialContext(ctx context.Context, network string, destination 
 	}
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
-		tcpConn, err := gonet.DialTCPWithBind(ctx, t.stack, localAddr, remoteAddr, networkProtocol)
+		// lx: SPEC 052 — bound the connect phase (~127s of gVisor SYN backoff
+		// otherwise); one-shot, dies with this dial, never reaches the returned
+		// conn. Rationale: transport/wireguard/connect_deadline_lx.go.
+		connectCtx, cancel := context.WithTimeout(ctx, C.TCPTimeout)
+		defer cancel()
+		tcpConn, err := gonet.DialTCPWithBind(connectCtx, t.stack, localAddr, remoteAddr, networkProtocol)
 		if err != nil {
 			return nil, err
 		}
@@ -1114,6 +1120,11 @@ func (t *Endpoint) PreferredDomain(metadata *adapter.InboundContext, domain stri
 	}
 	for _, suffix := range t.routeSuffixes.Load() {
 		if matchDomainSuffix(domain, suffix) {
+			return true
+		}
+	}
+	for _, suffix := range t.routeSuffixes.Load() {
+		if mDNS.IsSubDomain(suffix, domain) {
 			return true
 		}
 	}

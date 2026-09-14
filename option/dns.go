@@ -222,3 +222,13 @@ type MDNSDNSServerOptions struct {
 	LocalDNSServerOptions
 	Interface badoption.Listable[string] `json:"interface,omitempty"`
 }
+
+// lx:begin dns-group
+type GroupDNSServerOptions struct {
+	Servers  badoption.Listable[string] `json:"servers" reference:"dns_server"`
+	Mode     string                     `json:"mode,omitempty"`
+	ErrorTTL badoption.Duration         `json:"error_ttl,omitempty"`
+	WinTTL   badoption.Duration         `json:"win_ttl,omitempty"`
+}
+
+// lx:end dns-group
