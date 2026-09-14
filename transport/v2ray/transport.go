@@ -48,29 +48,9 @@ func NewClientTransport(ctx context.Context, dialer N.Dialer, serverAddr M.Socks
 	if options.Type == "" {
 		return nil, nil
 	}
-	var (
-		client adapter.V2RayClientTransport
-		err    error
-	)
-	switch options.Type {
-	case C.V2RayTransportTypeHTTP:
-		client, err = v2rayhttp.NewClient(ctx, dialer, serverAddr, options.HTTPOptions, tlsConfig)
-	case C.V2RayTransportTypeGRPC:
-		client, err = NewGRPCClient(ctx, dialer, serverAddr, options.GRPCOptions, tlsConfig)
-	case C.V2RayTransportTypeWebsocket:
-		client, err = v2raywebsocket.NewClient(ctx, dialer, serverAddr, options.WebsocketOptions, tlsConfig)
-	case C.V2RayTransportTypeQUIC:
-		if tlsConfig == nil {
-			return nil, C.ErrTLSRequired
-		}
-		client, err = NewQUICClient(ctx, dialer, serverAddr, options.QUICOptions, tlsConfig)
-	case C.V2RayTransportTypeHTTPUpgrade:
-		client, err = v2rayhttpupgrade.NewClient(ctx, dialer, serverAddr, options.HTTPUpgradeOptions, tlsConfig)
-	default:
+	constructor, loaded := lookupClientTransport(options.Type)
+	if !loaded {
 		return nil, E.New("unknown transport type: " + options.Type)
 	}
-	if err != nil {
-		return nil, err
-	}
-	return client, nil
+	return constructor(ctx, dialer, serverAddr, options, tlsConfig)
 }
