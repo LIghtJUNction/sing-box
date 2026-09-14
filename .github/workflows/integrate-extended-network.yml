@@ -1,0 +1,86 @@
+name: Integrate extended sing-box network features
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - integrate/extended-network-20260914
+    paths:
+      - .github/workflows/integrate-extended-network.yml
+      - scripts/integrate-extended-network.sh
+
+permissions:
+  contents: write
+
+concurrency:
+  group: integrate-extended-network
+  cancel-in-progress: true
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: integrate/extended-network-20260914
+          fetch-depth: 0
+          submodules: false
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Integrate extended dataplane tree
+        run: bash scripts/integrate-extended-network.sh
+
+      - name: Initialize AWG runtime submodule
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --recursive submodules/wireguard-go
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Preserve current core dependencies
+        run: |
+          go mod edit -dropreplace=github.com/sagernet/sing-tun || true
+          go mod edit -dropreplace=github.com/sagernet/gvisor || true
+          go mod edit -require=github.com/sagernet/sing-tun@v0.9.2-0.20260909144315-8e1fb85d5b15
+          go mod edit -require=github.com/sagernet/gvisor@v0.0.0-20260727.0-sing-box-mod.1
+          go mod tidy
+          git add -A
+
+      - name: Persist extended integration tree
+        run: |
+          if git diff --cached --quiet; then
+            echo "Extended integration already persisted"
+            exit 0
+          fi
+          git commit -m "feat: integrate extended sing-box network capabilities"
+          git push origin HEAD:integrate/extended-network-20260914
+
+      - name: Build Linux and Android arm64
+        run: |
+          TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+          CGO_ENABLED=0 go build -trimpath -tags "$TAGS" -ldflags "-checklinkname=0" ./cmd/sing-box
+          CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -trimpath -tags "$TAGS" -ldflags "-checklinkname=0" ./cmd/sing-box
+
+      - name: Test extended network packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+          for p in \
+            ./protocol/bond ./protocol/failover ./protocol/mieru ./protocol/vpn \
+            ./protocol/limiter/bandwidth ./protocol/limiter/connection \
+            ./protocol/limiter/rate ./protocol/limiter/traffic \
+            ./dns/transport/fallback ./transport/v2raykcp; do
+            [ -d "${p#./}" ] || continue
+            echo "::group::$p"
+            timeout 120s env CGO_ENABLED=0 go test -count=1 -timeout=90s -tags "$TAGS" "$p"
+            echo "::endgroup::"
+          done
