@@ -23,6 +23,12 @@ type DNSRouter interface {
 	ClearCache()
 	LookupReverseMapping(ip netip.Addr) (string, bool)
 	ResetNetwork()
+	// lx:begin lx_command
+	// Rules returns the live DNS rule table, mirroring Router.Rules() for route
+	// rules. Added for the SPEC 014 GetRules command RPC (CONSTITUTION §3.6);
+	// upstream exposes no DNS-rule getter. Implemented by dns.Router.
+	Rules() []DNSRule
+	// lx:end lx_command
 }
 
 type DNSClient interface {
@@ -83,6 +89,8 @@ type DNSTransport interface {
 	Type() string
 	Tag() string
 	Dependencies() []string
+	// OutboundTag is the detour tag this DNS server is bound to (lx: SPEC 018); "" = default.
+	OutboundTag() string
 	// Reset closes the transport's existing connections so later requests use fresh connections.
 	// Exchanges that are currently using those connections may fail.
 	Reset()

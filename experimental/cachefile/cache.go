@@ -32,6 +32,7 @@ var (
 		string(bucketRuleSet),
 		string(bucketRDRC),
 		string(bucketDNSCache),
+		string(bucketChainDisabled), // lx: SPEC 075
 	}
 
 	cacheIDDefault = []byte("default")

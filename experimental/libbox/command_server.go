@@ -236,6 +236,10 @@ func (s *CommandServer) SetError(message string) {
 }
 
 func (s *CommandServer) NeedWIFIState() bool {
+	// lx: early-rpc-guard — Ready() вместо Box() != nil, SPECS/TASKS/047
+	if !s.StartedService.Ready() {
+		return false
+	}
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.Box() == nil {
 		return false
@@ -244,6 +248,10 @@ func (s *CommandServer) NeedWIFIState() bool {
 }
 
 func (s *CommandServer) NeedFindProcess() bool {
+	// lx: early-rpc-guard — Ready() вместо Box() != nil, SPECS/TASKS/047
+	if !s.StartedService.Ready() {
+		return false
+	}
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.Box() == nil {
 		return false
@@ -307,6 +315,12 @@ func (s *CommandServer) RecordLockState(locked bool) {
 }
 
 func (s *CommandServer) ResetNetwork() {
+	// lx: early-rpc-guard — Ready() вместо Box() != nil, SPECS/TASKS/047.
+	// Box() перестаёт быть nil при создании box, а поля NetworkManager
+	// присваиваются только на StartStateInitialize — окно паники.
+	if !s.StartedService.Ready() {
+		return
+	}
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.Box() == nil {
 		return
@@ -315,6 +329,10 @@ func (s *CommandServer) ResetNetwork() {
 }
 
 func (s *CommandServer) UpdateWIFIState() {
+	// lx: early-rpc-guard — Ready() вместо Box() != nil, SPECS/TASKS/047
+	if !s.StartedService.Ready() {
+		return
+	}
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.Box() == nil {
 		return

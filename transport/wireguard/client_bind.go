@@ -5,8 +5,10 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -20,6 +22,12 @@ import (
 
 var _ conn.Bind = (*ClientBind)(nil)
 
+// clientBindDialTimeout bounds the detour dial in connect() (lx: SPEC 071).
+// C.TCPTimeout (15 s) is the established probe budget (SPEC 052): generous for
+// a slow-but-alive detour chain, finite for a dead one. A var, not a const —
+// tests shrink it to keep the red/green run fast.
+var clientBindDialTimeout = C.TCPTimeout
+
 type ClientBind struct {
 	ctx                 context.Context
 	logger              logger.Logger
@@ -30,7 +38,7 @@ type ClientBind struct {
 	reservedAccess      sync.RWMutex
 	reservedForEndpoint map[netip.AddrPort][3]uint8
 	connAccess          sync.Mutex
-	conn                *wireConn
+	conn                atomic.Pointer[wireConn] // lx: atomic — read on the connect() fast-path is lock-free (was a data race, upstream)
 	done                chan struct{}
 	isConnect           bool
 	connectAddr         netip.AddrPort
@@ -51,8 +59,23 @@ func NewClientBind(ctx context.Context, logger logger.Logger, dialer N.Dialer, i
 	}
 }
 
+// hasReserved reports whether any Cloudflare "reserved" value is configured
+// (WARP). When none is set the bind must leave bytes 1-3 untouched, so a plain
+// WireGuard / AmneziaWG endpoint keeps its magic header intact.
+func (c *ClientBind) hasReserved() bool {
+	if c.reserved != [3]uint8{} {
+		return true
+	}
+	for _, reserved := range c.reservedForEndpoint {
+		if reserved != [3]uint8{} {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *ClientBind) connect() (*wireConn, error) {
-	serverConn := c.conn
+	serverConn := c.conn.Load()
 	if serverConn != nil {
 		select {
 		case <-serverConn.done:
@@ -68,7 +91,7 @@ func (c *ClientBind) connect() (*wireConn, error) {
 		return nil, net.ErrClosed
 	default:
 	}
-	serverConn = c.conn
+	serverConn = c.conn.Load()
 	if serverConn != nil {
 		select {
 		case <-serverConn.done:
@@ -77,26 +100,58 @@ func (c *ClientBind) connect() (*wireConn, error) {
 			return serverConn, nil
 		}
 	}
+	// lx: SPEC 071/072 — bound the dial. It runs while holding connAccess, and a
+	// detour dial into a half-alive node can block forever (field dump: 54
+	// minutes inside an unread XHTTP upload pipe), starving every Send, the
+	// bind's own Close, and — through the bind-close chain — the process-wide
+	// pause manager. The deadline bounds the whole XHTTP raise because the
+	// XHTTP dial itself parks until the HTTP layer has adopted the upload body
+	// (lx: SPEC 077; until then SPEC 050's watchDialContext reached a blocked
+	// pipe write from outside the dial): a raise that FAILS fails the dial with
+	// its cause, a raise that outlives this deadline fails it with the context
+	// error, and a raise that fails after the conn was handed up breaks the
+	// pipe itself (v2rayxhttp fail paths, SPEC 072). The deadline never reaches
+	// past the dial: XHTTP requests ride a conn-scoped context under the
+	// transport lifetime, so this timer firing after the return does not abort
+	// a healthy conn (the lx.27-rc.2 field dump showed the opposite arrangement
+	// cycling every detour conn at 15 s and re-rolling the raise dice until the
+	// freeze hit).
+	dialCtx, dialCancel := context.WithTimeout(c.bindCtx, clientBindDialTimeout)
 	if c.isConnect {
-		udpConn, err := c.dialer.DialContext(c.bindCtx, N.NetworkUDP, M.SocksaddrFromNetIP(c.connectAddr))
+		udpConn, err := c.dialer.DialContext(dialCtx, N.NetworkUDP, M.SocksaddrFromNetIP(c.connectAddr))
 		if err != nil {
+			dialCancel()
 			return nil, err
 		}
-		c.conn = &wireConn{
+		serverConn = &wireConn{
 			PacketConn: bufio.NewUnbindPacketConn(udpConn),
 			done:       make(chan struct{}),
 		}
 	} else {
-		udpConn, err := c.dialer.ListenPacket(c.bindCtx, M.Socksaddr{Addr: netip.IPv4Unspecified()})
+		udpConn, err := c.dialer.ListenPacket(dialCtx, M.Socksaddr{Addr: netip.IPv4Unspecified()})
 		if err != nil {
+			dialCancel()
 			return nil, err
 		}
-		c.conn = &wireConn{
+		serverConn = &wireConn{
 			PacketConn: bufio.NewPacketConn(udpConn),
 			done:       make(chan struct{}),
 		}
 	}
-	return c.conn, nil
+	// lx: SPEC 071 — release the timeout context only when this connection
+	// generation dies, NOT on return. Since SPEC 077 the XHTTP dial returns
+	// only with the stream raised, so a cancel here would be harmless for it —
+	// the net.Dialer contract every detour transport now keeps; the deferred
+	// release stays as the conservative form (one timer per generation) for
+	// any detour dialer whose dial context still reaches past its return. The
+	// stream itself rides the transport-lifetime conn context, not dialCtx
+	// (lx: SPEC 072), so the timer firing after the return is a no-op.
+	go func() {
+		<-serverConn.done
+		dialCancel()
+	}()
+	c.conn.Store(serverConn)
+	return serverConn, nil
 }
 
 func (c *ClientBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort uint16, err error) {
@@ -135,7 +190,12 @@ func (c *ClientBind) receive(packets [][]byte, sizes []int, eps []conn.Endpoint)
 		return
 	}
 	sizes[0] = n
-	if n > 3 {
+	// lx: only strip the Cloudflare "reserved" bytes when a reserved value is
+	// actually configured (WARP). AmneziaWG writes a full uint32 magic header
+	// into bytes 0-3; unconditionally clearing 1-3 (as upstream ClientBind did)
+	// destroys ranged h1-h4 headers, so the AWG endpoint drops every packet.
+	// StdNetBind (the no-detour path) never clears on receive either.
+	if n > 3 && c.hasReserved() {
 		b := packets[0]
 		clear(b[1:4])
 	}
@@ -155,7 +215,7 @@ func (c *ClientBind) Close() error {
 	}
 	c.connAccess.Lock()
 	defer c.connAccess.Unlock()
-	common.Close(common.PtrOrNil(c.conn))
+	common.Close(common.PtrOrNil(c.conn.Load()))
 	return nil
 }
 
@@ -182,7 +242,13 @@ func (c *ClientBind) Send(bufs [][]byte, ep conn.Endpoint, offset int) error {
 			if !loaded {
 				reserved = c.reserved
 			}
-			copy(buf[1:4], reserved[:])
+			// lx: only stamp the reserved bytes when non-zero (WARP). For a
+			// plain WG / AmneziaWG endpoint reserved is [0,0,0]; overwriting
+			// bytes 1-3 would zero the upper bytes of an AWG magic header and
+			// break the tunnel. See the matching guard in receive().
+			if reserved != [3]uint8{} {
+				copy(buf[1:4], reserved[:])
+			}
 		}
 		_, err = udpConn.WriteToUDPAddrPort(buf, destination)
 		if err != nil {

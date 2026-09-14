@@ -51,6 +51,13 @@ func (t *fakeDNSTransport) Dependencies() []string {
 	return nil
 }
 
+// lx:begin lx_command
+func (t *fakeDNSTransport) OutboundTag() string {
+	return ""
+}
+
+// lx:end lx_command
+
 func (t *fakeDNSTransport) Reset() {
 }
 

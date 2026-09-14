@@ -57,6 +57,18 @@ const (
 	StartedService_SubmitOpenVPNChallengeResponse_FullMethodName = "/daemon.StartedService/SubmitOpenVPNChallengeResponse"
 	StartedService_CancelOpenVPNChallenge_FullMethodName         = "/daemon.StartedService/CancelOpenVPNChallenge"
 	StartedService_SubscribeNotifications_FullMethodName         = "/daemon.StartedService/SubscribeNotifications"
+	StartedService_URLTestOutbound_FullMethodName                = "/daemon.StartedService/URLTestOutbound"
+	StartedService_GetRules_FullMethodName                       = "/daemon.StartedService/GetRules"
+	StartedService_GetGroups_FullMethodName                      = "/daemon.StartedService/GetGroups"
+	StartedService_GetOutbounds_FullMethodName                   = "/daemon.StartedService/GetOutbounds"
+	StartedService_SubscribeDNSQueries_FullMethodName            = "/daemon.StartedService/SubscribeDNSQueries"
+	StartedService_GetPool_FullMethodName                        = "/daemon.StartedService/GetPool"
+	StartedService_GetDNSGroups_FullMethodName                   = "/daemon.StartedService/GetDNSGroups"
+	StartedService_GetRunningConfig_FullMethodName               = "/daemon.StartedService/GetRunningConfig"
+	StartedService_GetURLViaOutbound_FullMethodName              = "/daemon.StartedService/GetURLViaOutbound"
+	StartedService_GetChains_FullMethodName                      = "/daemon.StartedService/GetChains"
+	StartedService_SetChainPositionEnabled_FullMethodName        = "/daemon.StartedService/SetChainPositionEnabled"
+	StartedService_GetChainCloneConfig_FullMethodName            = "/daemon.StartedService/GetChainCloneConfig"
 )
 
 // StartedServiceClient is the client API for StartedService service.
@@ -105,6 +117,18 @@ type StartedServiceClient interface {
 	SubmitOpenVPNChallengeResponse(ctx context.Context, in *OpenVPNChallengeSubmission, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	CancelOpenVPNChallenge(ctx context.Context, in *OpenVPNChallengeCancel, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	SubscribeNotifications(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[NotificationEvent], error)
+	URLTestOutbound(ctx context.Context, in *URLTestOutboundRequest, opts ...grpc.CallOption) (*URLTestOutboundResponse, error)
+	GetRules(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*RuleList, error)
+	GetGroups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Groups, error)
+	GetOutbounds(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*OutboundList, error)
+	SubscribeDNSQueries(ctx context.Context, in *SubscribeDNSQueriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DnsQueryEvent], error)
+	GetPool(ctx context.Context, in *GetPoolRequest, opts ...grpc.CallOption) (*PoolList, error)
+	GetDNSGroups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*DnsGroupList, error)
+	GetRunningConfig(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*RunningConfig, error)
+	GetURLViaOutbound(ctx context.Context, in *GetURLViaOutboundRequest, opts ...grpc.CallOption) (*GetURLViaOutboundResponse, error)
+	GetChains(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ChainList, error)
+	SetChainPositionEnabled(ctx context.Context, in *SetChainPositionEnabledRequest, opts ...grpc.CallOption) (*SetChainPositionEnabledResponse, error)
+	GetChainCloneConfig(ctx context.Context, in *GetChainCloneConfigRequest, opts ...grpc.CallOption) (*RunningConfig, error)
 }
 
 type startedServiceClient struct {
@@ -697,6 +721,135 @@ func (c *startedServiceClient) SubscribeNotifications(ctx context.Context, in *e
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type StartedService_SubscribeNotificationsClient = grpc.ServerStreamingClient[NotificationEvent]
 
+func (c *startedServiceClient) URLTestOutbound(ctx context.Context, in *URLTestOutboundRequest, opts ...grpc.CallOption) (*URLTestOutboundResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(URLTestOutboundResponse)
+	err := c.cc.Invoke(ctx, StartedService_URLTestOutbound_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) GetRules(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*RuleList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RuleList)
+	err := c.cc.Invoke(ctx, StartedService_GetRules_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) GetGroups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Groups, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Groups)
+	err := c.cc.Invoke(ctx, StartedService_GetGroups_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) GetOutbounds(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*OutboundList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OutboundList)
+	err := c.cc.Invoke(ctx, StartedService_GetOutbounds_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) SubscribeDNSQueries(ctx context.Context, in *SubscribeDNSQueriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DnsQueryEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &StartedService_ServiceDesc.Streams[20], StartedService_SubscribeDNSQueries_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[SubscribeDNSQueriesRequest, DnsQueryEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type StartedService_SubscribeDNSQueriesClient = grpc.ServerStreamingClient[DnsQueryEvent]
+
+func (c *startedServiceClient) GetPool(ctx context.Context, in *GetPoolRequest, opts ...grpc.CallOption) (*PoolList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PoolList)
+	err := c.cc.Invoke(ctx, StartedService_GetPool_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) GetDNSGroups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*DnsGroupList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DnsGroupList)
+	err := c.cc.Invoke(ctx, StartedService_GetDNSGroups_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) GetRunningConfig(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*RunningConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RunningConfig)
+	err := c.cc.Invoke(ctx, StartedService_GetRunningConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) GetURLViaOutbound(ctx context.Context, in *GetURLViaOutboundRequest, opts ...grpc.CallOption) (*GetURLViaOutboundResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetURLViaOutboundResponse)
+	err := c.cc.Invoke(ctx, StartedService_GetURLViaOutbound_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) GetChains(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ChainList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ChainList)
+	err := c.cc.Invoke(ctx, StartedService_GetChains_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) SetChainPositionEnabled(ctx context.Context, in *SetChainPositionEnabledRequest, opts ...grpc.CallOption) (*SetChainPositionEnabledResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetChainPositionEnabledResponse)
+	err := c.cc.Invoke(ctx, StartedService_SetChainPositionEnabled_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) GetChainCloneConfig(ctx context.Context, in *GetChainCloneConfigRequest, opts ...grpc.CallOption) (*RunningConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RunningConfig)
+	err := c.cc.Invoke(ctx, StartedService_GetChainCloneConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StartedServiceServer is the server API for StartedService service.
 // All implementations must embed UnimplementedStartedServiceServer
 // for forward compatibility.
@@ -743,6 +896,18 @@ type StartedServiceServer interface {
 	SubmitOpenVPNChallengeResponse(context.Context, *OpenVPNChallengeSubmission) (*emptypb.Empty, error)
 	CancelOpenVPNChallenge(context.Context, *OpenVPNChallengeCancel) (*emptypb.Empty, error)
 	SubscribeNotifications(*emptypb.Empty, grpc.ServerStreamingServer[NotificationEvent]) error
+	URLTestOutbound(context.Context, *URLTestOutboundRequest) (*URLTestOutboundResponse, error)
+	GetRules(context.Context, *emptypb.Empty) (*RuleList, error)
+	GetGroups(context.Context, *emptypb.Empty) (*Groups, error)
+	GetOutbounds(context.Context, *emptypb.Empty) (*OutboundList, error)
+	SubscribeDNSQueries(*SubscribeDNSQueriesRequest, grpc.ServerStreamingServer[DnsQueryEvent]) error
+	GetPool(context.Context, *GetPoolRequest) (*PoolList, error)
+	GetDNSGroups(context.Context, *emptypb.Empty) (*DnsGroupList, error)
+	GetRunningConfig(context.Context, *emptypb.Empty) (*RunningConfig, error)
+	GetURLViaOutbound(context.Context, *GetURLViaOutboundRequest) (*GetURLViaOutboundResponse, error)
+	GetChains(context.Context, *emptypb.Empty) (*ChainList, error)
+	SetChainPositionEnabled(context.Context, *SetChainPositionEnabledRequest) (*SetChainPositionEnabledResponse, error)
+	GetChainCloneConfig(context.Context, *GetChainCloneConfigRequest) (*RunningConfig, error)
 	mustEmbedUnimplementedStartedServiceServer()
 }
 
@@ -754,171 +919,219 @@ type StartedServiceServer interface {
 type UnimplementedStartedServiceServer struct{}
 
 func (UnimplementedStartedServiceServer) GetVersion(context.Context, *emptypb.Empty) (*Version, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetVersion not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method GetVersion not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeServiceStatus(*emptypb.Empty, grpc.ServerStreamingServer[ServiceStatus]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeServiceStatus not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeServiceStatus not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeLog(*emptypb.Empty, grpc.ServerStreamingServer[Log]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeLog not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeLog not implemented")
 }
 
 func (UnimplementedStartedServiceServer) GetDefaultLogLevel(context.Context, *emptypb.Empty) (*DefaultLogLevel, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetDefaultLogLevel not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method GetDefaultLogLevel not implemented")
 }
 
 func (UnimplementedStartedServiceServer) ClearLogs(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method ClearLogs not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method ClearLogs not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeStatus(*SubscribeStatusRequest, grpc.ServerStreamingServer[Status]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeStatus not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeStatus not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeGroups(*emptypb.Empty, grpc.ServerStreamingServer[Groups]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeGroups not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeGroups not implemented")
 }
 
 func (UnimplementedStartedServiceServer) GetClashModeStatus(context.Context, *emptypb.Empty) (*ClashModeStatus, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetClashModeStatus not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method GetClashModeStatus not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeClashMode(*emptypb.Empty, grpc.ServerStreamingServer[ClashMode]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeClashMode not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeClashMode not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SetClashMode(context.Context, *ClashMode) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method SetClashMode not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method SetClashMode not implemented")
 }
 
 func (UnimplementedStartedServiceServer) URLTest(context.Context, *URLTestRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method URLTest not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method URLTest not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SelectOutbound(context.Context, *SelectOutboundRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method SelectOutbound not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method SelectOutbound not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SetGroupExpand(context.Context, *SetGroupExpandRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method SetGroupExpand not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method SetGroupExpand not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeConnections(*SubscribeConnectionsRequest, grpc.ServerStreamingServer[ConnectionEvents]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeConnections not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeConnections not implemented")
 }
 
 func (UnimplementedStartedServiceServer) CloseConnection(context.Context, *CloseConnectionRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method CloseConnection not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method CloseConnection not implemented")
 }
 
 func (UnimplementedStartedServiceServer) CloseAllConnections(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method CloseAllConnections not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method CloseAllConnections not implemented")
 }
 
 func (UnimplementedStartedServiceServer) GetDeprecatedWarnings(context.Context, *emptypb.Empty) (*DeprecatedWarnings, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetDeprecatedWarnings not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method GetDeprecatedWarnings not implemented")
 }
 
 func (UnimplementedStartedServiceServer) GetStartedAt(context.Context, *emptypb.Empty) (*StartedAt, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetStartedAt not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method GetStartedAt not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeOutbounds(*emptypb.Empty, grpc.ServerStreamingServer[OutboundList]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeOutbounds not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeOutbounds not implemented")
 }
 
 func (UnimplementedStartedServiceServer) StartNetworkQualityTest(*NetworkQualityTestRequest, grpc.ServerStreamingServer[NetworkQualityTestProgress]) error {
-	return status.Error(codes.Unimplemented, "method StartNetworkQualityTest not implemented")
+	return status.Errorf(codes.Unimplemented, "method StartNetworkQualityTest not implemented")
 }
 
 func (UnimplementedStartedServiceServer) StartSTUNTest(*STUNTestRequest, grpc.ServerStreamingServer[STUNTestProgress]) error {
-	return status.Error(codes.Unimplemented, "method StartSTUNTest not implemented")
+	return status.Errorf(codes.Unimplemented, "method StartSTUNTest not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeTailscaleStatus(*emptypb.Empty, grpc.ServerStreamingServer[TailscaleStatusUpdate]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeTailscaleStatus not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeTailscaleStatus not implemented")
 }
 
 func (UnimplementedStartedServiceServer) StartTailscalePing(*TailscalePingRequest, grpc.ServerStreamingServer[TailscalePingResponse]) error {
-	return status.Error(codes.Unimplemented, "method StartTailscalePing not implemented")
+	return status.Errorf(codes.Unimplemented, "method StartTailscalePing not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SetTailscaleExitNode(context.Context, *SetTailscaleExitNodeRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method SetTailscaleExitNode not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method SetTailscaleExitNode not implemented")
 }
 
 func (UnimplementedStartedServiceServer) TailscaleLogout(context.Context, *TailscaleLogoutRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method TailscaleLogout not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method TailscaleLogout not implemented")
 }
 
 func (UnimplementedStartedServiceServer) GetTailscaleCertificate(context.Context, *TailscaleCertificateRequest) (*TailscaleCertificate, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetTailscaleCertificate not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method GetTailscaleCertificate not implemented")
 }
 
 func (UnimplementedStartedServiceServer) StartTailscaleSSHSession(grpc.BidiStreamingServer[TailscaleSSHClientMessage, TailscaleSSHServerMessage]) error {
-	return status.Error(codes.Unimplemented, "method StartTailscaleSSHSession not implemented")
+	return status.Errorf(codes.Unimplemented, "method StartTailscaleSSHSession not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeTaildropInbox(*SubscribeTaildropInboxRequest, grpc.ServerStreamingServer[TaildropInbox]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeTaildropInbox not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeTaildropInbox not implemented")
 }
 
 func (UnimplementedStartedServiceServer) MarkTaildropInboxRead(context.Context, *MarkTaildropInboxReadRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method MarkTaildropInboxRead not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method MarkTaildropInboxRead not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SendTaildropFiles(grpc.BidiStreamingServer[TaildropSendClientMessage, TaildropSendServerMessage]) error {
-	return status.Error(codes.Unimplemented, "method SendTaildropFiles not implemented")
+	return status.Errorf(codes.Unimplemented, "method SendTaildropFiles not implemented")
 }
 
 func (UnimplementedStartedServiceServer) DownloadTaildropFile(*DownloadTaildropFileRequest, grpc.ServerStreamingServer[DownloadTaildropFileChunk]) error {
-	return status.Error(codes.Unimplemented, "method DownloadTaildropFile not implemented")
+	return status.Errorf(codes.Unimplemented, "method DownloadTaildropFile not implemented")
 }
 
 func (UnimplementedStartedServiceServer) DeleteTaildropFile(context.Context, *DeleteTaildropFileRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method DeleteTaildropFile not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteTaildropFile not implemented")
 }
 
 func (UnimplementedStartedServiceServer) CancelTaildropReceiving(context.Context, *CancelTaildropReceivingRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method CancelTaildropReceiving not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method CancelTaildropReceiving not implemented")
 }
 
 func (UnimplementedStartedServiceServer) ProvideUSBDevices(grpc.BidiStreamingServer[USBProviderMessage, USBServerMessage]) error {
-	return status.Error(codes.Unimplemented, "method ProvideUSBDevices not implemented")
+	return status.Errorf(codes.Unimplemented, "method ProvideUSBDevices not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeUSBIPServerStatus(*emptypb.Empty, grpc.ServerStreamingServer[USBIPServerStatusUpdate]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeUSBIPServerStatus not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeUSBIPServerStatus not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeOpenConnectStatus(*emptypb.Empty, grpc.ServerStreamingServer[OpenConnectStatusUpdate]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeOpenConnectStatus not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeOpenConnectStatus not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubmitOpenConnectAuthResponse(context.Context, *OpenConnectAuthResponseSubmission) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method SubmitOpenConnectAuthResponse not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitOpenConnectAuthResponse not implemented")
 }
 
 func (UnimplementedStartedServiceServer) CancelOpenConnectAuthChallenge(context.Context, *OpenConnectAuthChallengeCancel) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method CancelOpenConnectAuthChallenge not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method CancelOpenConnectAuthChallenge not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeOpenVPNStatus(*emptypb.Empty, grpc.ServerStreamingServer[OpenVPNStatusUpdate]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeOpenVPNStatus not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeOpenVPNStatus not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubmitOpenVPNChallengeResponse(context.Context, *OpenVPNChallengeSubmission) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method SubmitOpenVPNChallengeResponse not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitOpenVPNChallengeResponse not implemented")
 }
 
 func (UnimplementedStartedServiceServer) CancelOpenVPNChallenge(context.Context, *OpenVPNChallengeCancel) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method CancelOpenVPNChallenge not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method CancelOpenVPNChallenge not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeNotifications(*emptypb.Empty, grpc.ServerStreamingServer[NotificationEvent]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeNotifications not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeNotifications not implemented")
+}
+
+func (UnimplementedStartedServiceServer) URLTestOutbound(context.Context, *URLTestOutboundRequest) (*URLTestOutboundResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method URLTestOutbound not implemented")
+}
+
+func (UnimplementedStartedServiceServer) GetRules(context.Context, *emptypb.Empty) (*RuleList, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetRules not implemented")
+}
+
+func (UnimplementedStartedServiceServer) GetGroups(context.Context, *emptypb.Empty) (*Groups, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetGroups not implemented")
+}
+
+func (UnimplementedStartedServiceServer) GetOutbounds(context.Context, *emptypb.Empty) (*OutboundList, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetOutbounds not implemented")
+}
+
+func (UnimplementedStartedServiceServer) SubscribeDNSQueries(*SubscribeDNSQueriesRequest, grpc.ServerStreamingServer[DnsQueryEvent]) error {
+	return status.Errorf(codes.Unimplemented, "method SubscribeDNSQueries not implemented")
+}
+
+func (UnimplementedStartedServiceServer) GetPool(context.Context, *GetPoolRequest) (*PoolList, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetPool not implemented")
+}
+
+func (UnimplementedStartedServiceServer) GetDNSGroups(context.Context, *emptypb.Empty) (*DnsGroupList, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetDNSGroups not implemented")
+}
+
+func (UnimplementedStartedServiceServer) GetRunningConfig(context.Context, *emptypb.Empty) (*RunningConfig, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetRunningConfig not implemented")
+}
+
+func (UnimplementedStartedServiceServer) GetURLViaOutbound(context.Context, *GetURLViaOutboundRequest) (*GetURLViaOutboundResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetURLViaOutbound not implemented")
+}
+
+func (UnimplementedStartedServiceServer) GetChains(context.Context, *emptypb.Empty) (*ChainList, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetChains not implemented")
+}
+
+func (UnimplementedStartedServiceServer) SetChainPositionEnabled(context.Context, *SetChainPositionEnabledRequest) (*SetChainPositionEnabledResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetChainPositionEnabled not implemented")
+}
+
+func (UnimplementedStartedServiceServer) GetChainCloneConfig(context.Context, *GetChainCloneConfigRequest) (*RunningConfig, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetChainCloneConfig not implemented")
 }
 func (UnimplementedStartedServiceServer) mustEmbedUnimplementedStartedServiceServer() {}
 func (UnimplementedStartedServiceServer) testEmbeddedByValue()                        {}
@@ -931,7 +1144,7 @@ type UnsafeStartedServiceServer interface {
 }
 
 func RegisterStartedServiceServer(s grpc.ServiceRegistrar, srv StartedServiceServer) {
-	// If the following call panics, it indicates UnimplementedStartedServiceServer was
+	// If the following call pancis, it indicates UnimplementedStartedServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
@@ -1545,6 +1758,215 @@ func _StartedService_SubscribeNotifications_Handler(srv interface{}, stream grpc
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type StartedService_SubscribeNotificationsServer = grpc.ServerStreamingServer[NotificationEvent]
 
+func _StartedService_URLTestOutbound_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(URLTestOutboundRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).URLTestOutbound(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_URLTestOutbound_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).URLTestOutbound(ctx, req.(*URLTestOutboundRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_GetRules_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetRules(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetRules_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetRules(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_GetGroups_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetGroups(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetGroups_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetGroups(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_GetOutbounds_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetOutbounds(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetOutbounds_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetOutbounds(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_SubscribeDNSQueries_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(SubscribeDNSQueriesRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(StartedServiceServer).SubscribeDNSQueries(m, &grpc.GenericServerStream[SubscribeDNSQueriesRequest, DnsQueryEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type StartedService_SubscribeDNSQueriesServer = grpc.ServerStreamingServer[DnsQueryEvent]
+
+func _StartedService_GetPool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPoolRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetPool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetPool_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetPool(ctx, req.(*GetPoolRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_GetDNSGroups_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetDNSGroups(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetDNSGroups_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetDNSGroups(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_GetRunningConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetRunningConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetRunningConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetRunningConfig(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_GetURLViaOutbound_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetURLViaOutboundRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetURLViaOutbound(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetURLViaOutbound_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetURLViaOutbound(ctx, req.(*GetURLViaOutboundRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_GetChains_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetChains(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetChains_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetChains(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_SetChainPositionEnabled_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetChainPositionEnabledRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).SetChainPositionEnabled(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_SetChainPositionEnabled_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).SetChainPositionEnabled(ctx, req.(*SetChainPositionEnabledRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_GetChainCloneConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetChainCloneConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetChainCloneConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetChainCloneConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetChainCloneConfig(ctx, req.(*GetChainCloneConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // StartedService_ServiceDesc is the grpc.ServiceDesc for StartedService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1639,6 +2061,50 @@ var StartedService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelOpenVPNChallenge",
 			Handler:    _StartedService_CancelOpenVPNChallenge_Handler,
+		},
+		{
+			MethodName: "URLTestOutbound",
+			Handler:    _StartedService_URLTestOutbound_Handler,
+		},
+		{
+			MethodName: "GetRules",
+			Handler:    _StartedService_GetRules_Handler,
+		},
+		{
+			MethodName: "GetGroups",
+			Handler:    _StartedService_GetGroups_Handler,
+		},
+		{
+			MethodName: "GetOutbounds",
+			Handler:    _StartedService_GetOutbounds_Handler,
+		},
+		{
+			MethodName: "GetPool",
+			Handler:    _StartedService_GetPool_Handler,
+		},
+		{
+			MethodName: "GetDNSGroups",
+			Handler:    _StartedService_GetDNSGroups_Handler,
+		},
+		{
+			MethodName: "GetRunningConfig",
+			Handler:    _StartedService_GetRunningConfig_Handler,
+		},
+		{
+			MethodName: "GetURLViaOutbound",
+			Handler:    _StartedService_GetURLViaOutbound_Handler,
+		},
+		{
+			MethodName: "GetChains",
+			Handler:    _StartedService_GetChains_Handler,
+		},
+		{
+			MethodName: "SetChainPositionEnabled",
+			Handler:    _StartedService_SetChainPositionEnabled_Handler,
+		},
+		{
+			MethodName: "GetChainCloneConfig",
+			Handler:    _StartedService_GetChainCloneConfig_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
@@ -1743,6 +2209,11 @@ var StartedService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "SubscribeNotifications",
 			Handler:       _StartedService_SubscribeNotifications_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "SubscribeDNSQueries",
+			Handler:       _StartedService_SubscribeDNSQueries_Handler,
 			ServerStreams: true,
 		},
 	},
