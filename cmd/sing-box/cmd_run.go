@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	runtimeDebug "runtime/debug"
 	"sort"
-	"strings"
 	"syscall"
 	"time"
 
