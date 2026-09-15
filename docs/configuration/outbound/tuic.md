@@ -79,6 +79,14 @@ traffic (basically QUIC streams).
 
 Conflict with `udp_relay_mode`.
 
+#### zero_rtt_handshake
+
+Enable QUIC 0-RTT handshakes for the TUIC connection.
+
+#### heartbeat
+
+Interval between TUIC heartbeat packets.
+
 #### network
 
 Enabled network

@@ -6,20 +6,20 @@
 
 ```json
 {
-"type": "naive",
-"tag": "naive-in",
-"network": "udp",
-...
-// Listen Fields
+  "type": "naive",
+  "tag": "naive-in",
+  "network": "udp",
 
-"users": [
-{
-"username": "sekai",
-"password": "password"
-}
-],
-"quic_congestion_control": "",
-"tls": {}
+  ... // Listen Fields
+
+  "users": [
+    {
+      "username": "sekai",
+      "password": "password"
+    }
+  ],
+  "quic_congestion_control": "",
+  "tls": {}
 }
 ```
 
