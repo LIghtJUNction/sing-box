@@ -41,8 +41,6 @@ Override the connection destination address.
 
 Override the connection destination port.
 
-Protocol value can be `1` or `2`.
-
 ### Dial Fields
 
 See [Dial Fields](/configuration/shared/dial/) for details.
