@@ -39,12 +39,48 @@ func (h *vlessDialer) wrapEncryption(ctx context.Context, conn net.Conn) (net.Co
 	if h.encryption == nil {
 		return conn, nil
 	}
+
+	deadlineArmed := false
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := conn.SetWriteDeadline(deadline); err == nil {
-			defer conn.SetWriteDeadline(time.Time{})
+			deadlineArmed = true
 		}
 	}
+
+	// A deadline alone is not enough: group shutdown can cancel the probe long
+	// before its TCP timeout expires. Handshake has no context parameter, so an
+	// actual cancellation temporarily uses both connection deadlines to wake
+	// whichever side is blocked. This is safe here: a cancelled dial never hands
+	// the connection to its caller. If deadlines are unsupported, close the conn.
+	var cancelDone chan struct{}
+	var stopCancel func() bool
+	if ctx.Done() != nil {
+		cancelDone = make(chan struct{})
+		stopCancel = context.AfterFunc(ctx, func() {
+			if err := conn.SetDeadline(time.Now()); err != nil {
+				common.Close(conn)
+			}
+			close(cancelDone)
+		})
+	}
+
 	encryptedConn, err := h.encryption.Handshake(conn)
+
+	// Stop and, if necessary, join the cancellation callback before returning.
+	// Otherwise a dial context cancelled immediately after success could arm a
+	// deadline on a live connection that has already escaped this function.
+	if stopCancel != nil && !stopCancel() {
+		<-cancelDone
+	}
+
+	ctxErr := ctx.Err()
+	if deadlineArmed && ctxErr == nil {
+		_ = conn.SetWriteDeadline(time.Time{})
+	}
+	if ctxErr != nil {
+		common.Close(conn)
+		return nil, E.Cause(ctxErr, "encryption handshake")
+	}
 	if err != nil {
 		common.Close(conn)
 		return nil, E.Cause(err, "encryption handshake")

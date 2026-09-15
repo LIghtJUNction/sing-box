@@ -18,6 +18,10 @@ on:
       - testing
       - unstable
 
+permissions:
+  contents: read
+  pull-requests: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build }}
   cancel-in-progress: true
@@ -57,6 +61,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Checkout WireGuard submodule
+        run: git submodule update --init --depth 1 -- submodules/wireguard-go
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -77,3 +83,4 @@ jobs:
           args: --timeout=30m
           install-mode: binary
           verify: false
+          only-new-issues: true
