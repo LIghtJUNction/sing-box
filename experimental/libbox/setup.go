@@ -69,6 +69,7 @@ func applySetupOptions(options *SetupOptions) {
 	sBasePath = options.BasePath
 	sWorkingPath = options.WorkingPath
 	sTempPath = options.TempPath
+	C.AddResourcePath(sBasePath)
 
 	sUserID = os.Getuid()
 	sGroupID = os.Getgid()
