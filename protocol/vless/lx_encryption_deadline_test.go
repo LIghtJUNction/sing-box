@@ -2,8 +2,11 @@ package vless
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/rand"
 	"errors"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -91,5 +94,88 @@ func TestWrapEncryptionWithoutDeadlineTouchesNothing(t *testing.T) {
 
 	if conn.bothCalled || conn.writeCalled || conn.readCalled {
 		t.Fatal("wrapEncryption armed a deadline although the dial context carries none")
+	}
+}
+
+type cancelBlockingConn struct {
+	writeStarted chan struct{}
+	unblock      chan struct{}
+	startOnce    sync.Once
+	unblockOnce  sync.Once
+}
+
+func newCancelBlockingConn() *cancelBlockingConn {
+	return &cancelBlockingConn{
+		writeStarted: make(chan struct{}),
+		unblock:      make(chan struct{}),
+	}
+}
+
+func (c *cancelBlockingConn) Read([]byte) (int, error) {
+	return 0, errors.New("unexpected handshake read")
+}
+
+func (c *cancelBlockingConn) Write(b []byte) (int, error) {
+	c.startOnce.Do(func() { close(c.writeStarted) })
+	<-c.unblock
+	return 0, context.Canceled
+}
+
+func (c *cancelBlockingConn) Close() error {
+	c.unblockOnce.Do(func() { close(c.unblock) })
+	return nil
+}
+
+func (c *cancelBlockingConn) LocalAddr() net.Addr  { return M.Socksaddr{} }
+func (c *cancelBlockingConn) RemoteAddr() net.Addr { return M.Socksaddr{} }
+func (c *cancelBlockingConn) SetDeadline(deadline time.Time) error {
+	if !deadline.IsZero() && !deadline.After(time.Now()) {
+		c.unblockOnce.Do(func() { close(c.unblock) })
+	}
+	return nil
+}
+func (c *cancelBlockingConn) SetReadDeadline(time.Time) error {
+	return nil
+}
+func (c *cancelBlockingConn) SetWriteDeadline(time.Time) error {
+	return nil
+}
+
+// TestWrapEncryptionCancelInterruptsHandshake pins the shutdown path: cancelling
+// the URL-test/group context must interrupt the bare encryption handshake now,
+// not wait for the original TCP deadline and leave a zombie across box.Close.
+func TestWrapEncryptionCancelInterruptsHandshake(t *testing.T) {
+	privateKey, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptionClient := &encryption.ClientInstance{}
+	if err := encryptionClient.Init([][]byte{privateKey.PublicKey().Bytes()}, 0, 0, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	dialer := &vlessDialer{encryption: encryptionClient}
+	conn := newCancelBlockingConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, err := dialer.wrapEncryption(ctx, conn)
+		result <- err
+	}()
+
+	select {
+	case <-conn.writeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("encryption handshake did not reach the blocked write")
+	}
+	cancel()
+
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("wrapEncryption error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("encryption handshake survived context cancellation")
 	}
 }
