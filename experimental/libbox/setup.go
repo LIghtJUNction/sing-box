@@ -150,13 +150,59 @@ func FormatDuration(duration int64) string {
 }
 
 func FormatBitrate(bps int64) string {
-	return networkquality.FormatBitrate(bps).String()
+	return networkquality.FormatBitrate(bps)
 }
 
-func FormatBitrateString(bps int64) string {
-	return networkquality.FormatBitrate(bps).String()
+const NetworkQualityDefaultConfigURL = networkquality.DefaultConfigURL
+
+const NetworkQualityDefaultMaxRuntimeSeconds = int32(networkquality.DefaultMaxRuntime / time.Second)
+
+const (
+	NetworkQualityAccuracyLow    = int32(networkquality.AccuracyLow)
+	NetworkQualityAccuracyMedium = int32(networkquality.AccuracyMedium)
+	NetworkQualityAccuracyHigh   = int32(networkquality.AccuracyHigh)
+)
+
+const (
+	NetworkQualityPhaseIdle     = int32(networkquality.PhaseIdle)
+	NetworkQualityPhaseDownload = int32(networkquality.PhaseDownload)
+	NetworkQualityPhaseUpload   = int32(networkquality.PhaseUpload)
+	NetworkQualityPhaseDone     = int32(networkquality.PhaseDone)
+)
+
+const STUNDefaultServer = stun.DefaultServer
+
+const (
+	STUNPhaseBinding      = int32(stun.PhaseBinding)
+	STUNPhaseNATMapping   = int32(stun.PhaseNATMapping)
+	STUNPhaseNATFiltering = int32(stun.PhaseNATFiltering)
+	STUNPhaseDone         = int32(stun.PhaseDone)
+)
+
+const (
+	NATMappingEndpointIndependent     = int32(stun.NATMappingEndpointIndependent)
+	NATMappingAddressDependent        = int32(stun.NATMappingAddressDependent)
+	NATMappingAddressAndPortDependent = int32(stun.NATMappingAddressAndPortDependent)
+)
+
+const (
+	NATFilteringEndpointIndependent     = int32(stun.NATFilteringEndpointIndependent)
+	NATFilteringAddressDependent        = int32(stun.NATFilteringAddressDependent)
+	NATFilteringAddressAndPortDependent = int32(stun.NATFilteringAddressAndPortDependent)
+)
+
+func FormatNATMapping(value int32) string {
+	return stun.NATMapping(value).String()
 }
 
-func FormatNATType(natType int32) string {
-	return stun.NATType(natType).String()
+func FormatNATFiltering(value int32) string {
+	return stun.NATFiltering(value).String()
+}
+
+func FormatFQDN(fqdn string) string {
+	return dns.FqdnToDomain(fqdn)
+}
+
+func ProxyDisplayType(proxyType string) string {
+	return C.ProxyDisplayName(proxyType)
 }
