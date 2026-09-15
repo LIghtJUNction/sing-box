@@ -85,6 +85,12 @@ echo "private key" || wg pubkey
 
 or `sing-box generate wg-keypair`.
 
+#### listen_port
+
+UDP port used to listen for incoming WireGuard packets.
+
+A port is selected automatically when unset.
+
 #### peers
 
 ==Required==
