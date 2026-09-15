@@ -115,6 +115,32 @@ type ECHClientConfig struct {
 	lastUpdate      time.Time
 }
 
+type echFetchContext struct {
+	config *ECHClientConfig
+	parent *echFetchContext
+}
+
+type echFetchContextKey struct{}
+
+func hasECHFetchContext(ctx context.Context, config *ECHClientConfig) bool {
+	current, _ := ctx.Value(echFetchContextKey{}).(*echFetchContext)
+	for current != nil {
+		if current.config == config {
+			return true
+		}
+		current = current.parent
+	}
+	return false
+}
+
+func withECHFetchContext(ctx context.Context, config *ECHClientConfig) context.Context {
+	parent, _ := ctx.Value(echFetchContextKey{}).(*echFetchContext)
+	return context.WithValue(ctx, echFetchContextKey{}, &echFetchContext{
+		config: config,
+		parent: parent,
+	})
+}
+
 func (s *ECHClientConfig) ClientHandshake(ctx context.Context, conn net.Conn) (aTLS.Conn, error) {
 	tlsConn, err := s.fetchAndHandshake(ctx, conn)
 	if err != nil {
@@ -128,6 +154,9 @@ func (s *ECHClientConfig) ClientHandshake(ctx context.Context, conn net.Conn) (a
 }
 
 func (s *ECHClientConfig) fetchAndHandshake(ctx context.Context, conn net.Conn) (aTLS.Conn, error) {
+	if hasECHFetchContext(ctx, s) {
+		return nil, E.New("recursive ECH config fetch")
+	}
 	s.access.Lock()
 	defer s.access.Unlock()
 	if len(s.ECHConfigList()) == 0 || s.lastTTL == 0 || time.Since(s.lastUpdate) > s.lastTTL {
@@ -147,7 +176,7 @@ func (s *ECHClientConfig) fetchAndHandshake(ctx context.Context, conn net.Conn) 
 				},
 			},
 		}
-		response, err := s.dnsRouter.Exchange(ctx, message, adapter.DNSQueryOptions{})
+		response, err := s.dnsRouter.Exchange(withECHFetchContext(ctx, s), message, adapter.DNSQueryOptions{})
 		if err != nil {
 			return nil, E.Cause(err, "fetch ECH config list")
 		}
