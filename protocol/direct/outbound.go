@@ -47,6 +47,7 @@ type Outbound struct {
 	isEmpty        bool
 	myAddresses    common.TypedValue[[]netip.Prefix]
 	icmpPort       *ping.Port
+	tcpFastOpen    bool // lx: keep pre-resolved TFO dials out of temporary Happy-Eyeballs contexts
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.DirectOutboundOptions) (adapter.Outbound, error) {
@@ -75,6 +76,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		isEmpty: reflect.DeepEqual(options.DialerOptions, option.DialerOptions{
 			AbstractDialerOptions: option.AbstractDialerOptions{UDPFragmentDefault: true},
 		}),
+		tcpFastOpen: options.TCPFastOpen, // lx: issue #117 / upstream #4386
 	}
 	//nolint:staticcheck
 	if options.ProxyProtocol != 0 {
@@ -212,6 +214,18 @@ func (h *Outbound) Close() error {
 	return nil
 }
 
+// dialResolvedNetwork keeps TFO's lazy first-write dial on the caller context.
+// A mixed-family Happy-Eyeballs race owns temporary child contexts and cancels
+// them as soon as DialContext returns. For slow-open TFO, DialContext only
+// returns a lazy connection object; cancelling that child context before the
+// first Write makes the real connect fail immediately. lx: issue #117 / upstream #4386.
+func (h *Outbound) dialResolvedNetwork(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, networkStrategy *C.NetworkStrategy, networkType []C.InterfaceType, fallbackNetworkType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
+	if h.tcpFastOpen && N.NetworkName(network) == N.NetworkTCP {
+		return dialer.DialSerialNetwork(ctx, h.dialer, network, destination, destinationAddresses, networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
+	}
+	return dialer.DialParallelNetwork(ctx, h.dialer, network, destination, destinationAddresses, len(destinationAddresses) > 0 && destinationAddresses[0].Is6(), networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
+}
+
 func (h *Outbound) DialParallel(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr) (net.Conn, error) {
 	if h.isMyLoopbackAddress(destinationAddresses...) {
 		return nil, E.New("loopback connection to TUN range")
@@ -226,7 +240,7 @@ func (h *Outbound) DialParallel(ctx context.Context, network string, destination
 	case N.NetworkUDP:
 		h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	}
-	return dialer.DialParallelNetwork(ctx, h.dialer, network, destination, destinationAddresses, len(destinationAddresses) > 0 && destinationAddresses[0].Is6(), nil, nil, nil, h.fallbackDelay)
+	return h.dialResolvedNetwork(ctx, network, destination, destinationAddresses, nil, nil, nil, h.fallbackDelay)
 }
 
 func (h *Outbound) DialParallelNetwork(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, networkStrategy *C.NetworkStrategy, networkType []C.InterfaceType, fallbackNetworkType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
@@ -243,7 +257,7 @@ func (h *Outbound) DialParallelNetwork(ctx context.Context, network string, dest
 	case N.NetworkUDP:
 		h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	}
-	return dialer.DialParallelNetwork(ctx, h.dialer, network, destination, destinationAddresses, len(destinationAddresses) > 0 && destinationAddresses[0].Is6(), networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
+	return h.dialResolvedNetwork(ctx, network, destination, destinationAddresses, networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
 }
 
 func (h *Outbound) ListenSerialNetworkPacket(ctx context.Context, destination M.Socksaddr, destinationAddresses []netip.Addr, networkStrategy *C.NetworkStrategy, networkType []C.InterfaceType, fallbackNetworkType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, netip.Addr, error) {
