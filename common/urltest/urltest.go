@@ -25,6 +25,15 @@ type HistoryStorage struct {
 	access       sync.RWMutex
 	delayHistory map[string]*adapter.URLTestHistory
 	updateHooks  []*observable.Subscriber[struct{}]
+	parent       *HistoryStorage
+}
+
+// NewScopedHistoryStorage keeps selection evidence private to a test group.
+// The parent still exposes the latest observation for legacy API consumers.
+func NewScopedHistoryStorage(parent *HistoryStorage) *HistoryStorage {
+	s := NewHistoryStorage()
+	s.parent = parent
+	return s
 }
 
 func NewHistoryStorage() *HistoryStorage {
@@ -41,8 +50,11 @@ func (s *HistoryStorage) AddUpdateHook(hook *observable.Subscriber[struct{}]) {
 
 func (s *HistoryStorage) NotifyUpdated() {
 	s.access.RLock()
-	defer s.access.RUnlock()
 	s.notifyUpdated()
+	s.access.RUnlock()
+	if s.parent != nil {
+		s.parent.NotifyUpdated()
+	}
 }
 
 func (s *HistoryStorage) LoadURLTestHistory(tag string) *adapter.URLTestHistory {
@@ -56,9 +68,19 @@ func (s *HistoryStorage) LoadURLTestHistory(tag string) *adapter.URLTestHistory 
 
 func (s *HistoryStorage) DeleteURLTestHistory(tag string) {
 	s.access.Lock()
+	previous := s.delayHistory[tag]
 	delete(s.delayHistory, tag)
 	s.notifyUpdated()
 	s.access.Unlock()
+	if s.parent != nil && previous != nil {
+		s.parent.access.Lock()
+		// A failure for one target must not erase a newer success for another.
+		if s.parent.delayHistory[tag] == previous {
+			delete(s.parent.delayHistory, tag)
+			s.parent.notifyUpdated()
+		}
+		s.parent.access.Unlock()
+	}
 }
 
 func (s *HistoryStorage) StoreURLTestHistory(tag string, history *adapter.URLTestHistory) {
@@ -66,6 +88,9 @@ func (s *HistoryStorage) StoreURLTestHistory(tag string, history *adapter.URLTes
 	s.delayHistory[tag] = history
 	s.notifyUpdated()
 	s.access.Unlock()
+	if s.parent != nil {
+		s.parent.StoreURLTestHistory(tag, history)
+	}
 }
 
 func (s *HistoryStorage) notifyUpdated() {
