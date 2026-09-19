@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/dialer"
@@ -45,16 +44,15 @@ func RegisterHTTPS(registry *dns.TransportRegistry) {
 
 type HTTPSTransport struct {
 	dns.TransportAdapter
-	logger           logger.ContextLogger
-	dialer           N.Dialer
-	destination      *url.URL
-	headers          http.Header
-	serverAddr       M.Socksaddr
-	fallback         *atomic.Bool
-	keepIdle         atomic.Bool
-	transportAccess  sync.Mutex
-	transport        *HTTPSTransportWrapper
-	transportResetAt time.Time
+	logger          logger.ContextLogger
+	dialer          N.Dialer
+	destination     *url.URL
+	headers         http.Header
+	serverAddr      M.Socksaddr
+	fallback        *atomic.Bool
+	keepIdle        atomic.Bool
+	transportAccess sync.Mutex
+	transport       *HTTPSTransportWrapper
 }
 
 func NewHTTPS(ctx context.Context, logger log.ContextLogger, tag string, options option.RemoteHTTPSDNSServerOptions) (adapter.DNSTransport, error) {
@@ -183,24 +181,20 @@ func (t *HTTPSTransport) CloseIdleConnections() {
 func (t *HTTPSTransport) resetTransportLocked() {
 	oldTransport := t.transport
 	t.transport = NewHTTPSTransportWrapper(t.dialer, t.serverAddr, t.fallback)
-	t.transportResetAt = time.Now()
 	oldTransport.Close()
 }
 
 func (t *HTTPSTransport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
-	startAt := time.Now()
 	response, err := t.exchange(ctx, message)
 	if !t.keepIdle.Load() {
 		t.CloseIdleConnections()
 	}
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			t.transportAccess.Lock()
-			defer t.transportAccess.Unlock()
-			if t.transportResetAt.After(startAt) {
-				return nil, err
-			}
-			t.resetTransportLocked()
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			// A single query's deadline must not close active HTTP/2 streams
+			// belonging to unrelated queries. The HTTP transports already
+			// retire failed connections; only discard idle ones here.
+			t.CloseIdleConnections()
 		}
 		return nil, err
 	}
