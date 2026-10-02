@@ -23,8 +23,9 @@ type peerRoutes struct {
 }
 
 type peerQueue struct {
-	device *device.Device
-	queue  *tun.OutboundQueue
+	peer    *device.Peer
+	queue   *tun.OutboundQueue
+	packets [][]byte
 }
 
 func newPeerRouter(options DeviceOptions) *peerRouter {
@@ -44,7 +45,7 @@ func (r *peerRouter) setPeers(wgDevice *device.Device, peers []*device.Peer) {
 		queues:     make(map[*device.Peer]*peerQueue, len(peers)),
 	}
 	for _, peer := range peers {
-		current := &peerQueue{device: wgDevice}
+		current := &peerQueue{peer: peer}
 		current.queue = r.memoryTun.NewOutboundQueue(current.write)
 		routes.queues[peer] = current
 	}
@@ -112,25 +113,12 @@ func (r *peerRoutes) close() {
 
 func (q *peerQueue) write(packetBuffers []*buf.Buffer) {
 	defer buf.ReleaseMulti(packetBuffers)
-	refs := make([]device.InputPacketRef, len(packetBuffers))
-	packetSlices := make([][]byte, len(packetBuffers))
-	packetRefs := make([]*device.InputPacketRef, 0, len(packetBuffers))
-	for i, packetBuffer := range packetBuffers {
-		packet := packetBuffer.Bytes()
-		var destination []byte
-		switch header.IPVersion(packet) {
-		case header.IPv4Version:
-			destination = header.IPv4(packet).DestinationAddressSlice()
-		case header.IPv6Version:
-			destination = header.IPv6(packet).DestinationAddressSlice()
-		default:
-			continue
-		}
-		packetSlices[i] = packet
-		refs[i] = device.InputPacketRef{Destination: destination, PacketSlices: packetSlices[i : i+1]}
-		packetRefs = append(packetRefs, &refs[i])
+	for _, packetBuffer := range packetBuffers {
+		q.packets = append(q.packets, packetBuffer.Bytes())
 	}
-	// Retain the pinned AWG device's padding and bounded injection path. It
-	// copies the plaintext before returning, so pooled memory is released here.
-	q.device.InputPackets(packetRefs)
+	// The native stack's per-peer queue must retain backpressure through
+	// encryption; the datagram injection API deliberately drops a full queue.
+	q.peer.WritePackets(q.packets)
+	clear(q.packets)
+	q.packets = q.packets[:0]
 }

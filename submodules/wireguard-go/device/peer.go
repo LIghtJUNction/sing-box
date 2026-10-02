@@ -33,7 +33,12 @@ type Peer struct {
 		sessionExpires time.Time
 	}
 
-	queuedOutboundPackets atomic.Int32 // packets in staged+outbound queues, for input backpressure
+	stagedPackets         atomic.Int32
+	queuedOutboundPackets atomic.Int32
+	outboundSpace         struct {
+		sync.Mutex
+		ready chan struct{}
+	}
 
 	// deleteOnIdle indicates whether the peer should be deleted when idle
 	// because it was auto-created via a Device.PeerLookupFunc.
@@ -45,7 +50,6 @@ type Peer struct {
 		sync.Mutex
 		val            conn.Endpoint
 		candidates     []conn.Endpoint
-		resolver       func() ([]conn.Endpoint, error)
 		clearSrcOnTx   bool // signal to val.ClearSrc() prior to next packet transmission
 		disableRoaming bool
 	}
@@ -351,6 +355,7 @@ func (peer *Peer) Stop() {
 	if !peer.isRunning.Swap(false) {
 		return
 	}
+	peer.wakeOutboundWaiters()
 
 	peer.device.log.Verbosef("%v - Stopping", peer)
 
@@ -450,26 +455,12 @@ func (peer *Peer) noteUDPWindow(size uint32) {
 	}
 }
 
-// SetEndpointResolver sets a function providing the candidate endpoints for
-// this peer. It is invoked on every handshake initiation, and the initiation
-// is sent to the current endpoint and every candidate; the source of the
-// first valid reply becomes the current endpoint via roaming. When the
-// resolver fails, the candidates from its last successful invocation are
-// reused.
-func (peer *Peer) SetEndpointResolver(resolver func() ([]conn.Endpoint, error)) {
-	peer.endpoint.Lock()
-	defer peer.endpoint.Unlock()
-	peer.endpoint.resolver = resolver
-}
-
 func (peer *Peer) resolveEndpoints() []conn.Endpoint {
-	peer.endpoint.Lock()
-	resolver := peer.endpoint.resolver
-	peer.endpoint.Unlock()
+	resolver := peer.device.endpointResolverFn.Load()
 	if resolver == nil {
 		return nil
 	}
-	resolved, err := resolver()
+	resolved, err := (*resolver)(peer.handshake.remoteStatic)
 	peer.endpoint.Lock()
 	defer peer.endpoint.Unlock()
 	if err != nil {

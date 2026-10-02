@@ -205,11 +205,11 @@ require (
 // (sagernet/wireguard-go base + AmneziaWG obfuscation grafted via 3-way merge),
 // which understands the obfuscation IpcSet keys (jc/jmin/jmax/s1/s2/s3/s4/h1..h4/i1..i5)
 // while keeping the sagernet device/tun contract sing-box relies on (Send(offset),
-// InputPacket, conn reserved/control) and neutralizes the 8-byte encapsulating
+// packet injection, conn reserved/control) and neutralizes the 8-byte encapsulating
 // headroom (MessageEncapsulatingTransportSize=0) so obfuscation composes cleanly.
-// The tracked dependency retains the pinned AWG implementation and backports
-// the scoped upstream Tailscale peer PSK API. See submodules/wireguard-go/VENDORED.md
-// for the exact source revisions and compatibility patch.
+// The tracked dependency retains the pinned AWG implementation while carrying
+// the complete required upstream WireGuard line. See
+// submodules/wireguard-go/VENDORED.md for exact source revisions and integration details.
 replace github.com/sagernet/wireguard-go => ./submodules/wireguard-go
 
 // lx:end awg

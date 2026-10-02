@@ -245,6 +245,11 @@ type paddedPair struct {
 // the channel bind, both configured with s4 (transport padding) enabled.
 func newPaddedDevicePair(t *testing.T) *paddedPair {
 	t.Helper()
+	return newPaddedDevicePairWithTap(t, nil)
+}
+
+func newPaddedDevicePairWithTap(t *testing.T, tap func([]byte)) *paddedPair {
+	t.Helper()
 
 	skA, err := newPrivateKey()
 	if err != nil {
@@ -258,6 +263,7 @@ func newPaddedDevicePair(t *testing.T) *paddedPair {
 	pkB := skB.publicKey()
 
 	bindA, bindB := newChanBindPair()
+	bindA.tap = tap
 	tunA := newChanTun()
 	tunB := newChanTun()
 
@@ -320,18 +326,19 @@ func awaitPacket(t *testing.T, from *chanTun, want []byte, resend func()) {
 // Tests.
 // ---------------------------------------------------------------------------
 
-// TestTransportPaddingInputPacket exercises the exact crash path: an injected
-// packet (Device.InputPacket) whose buffer was allocated by payload size.
+// TestTransportPaddingWritePackets exercises the tight-allocation injection
+// path through the blocking per-peer API.
 // With s4=60 and a 28-byte IPv4 packet the pre-fix buffer was 76 bytes and
 // the padding shift indexed [123] -> index out of range.
-func TestTransportPaddingInputPacket(t *testing.T) {
+func TestTransportPaddingWritePackets(t *testing.T) {
 	pair := newPaddedDevicePair(t)
 
 	// 20-byte header + 8-byte payload = 28 bytes, the on-device crash size.
 	pkt := buildIPv4Packet(testIPA, testIPB, 8)
 	dst := testIPB.AsSlice()
 
-	send := func() { pair.devA.InputPacket(dst, [][]byte{pkt}) }
+	peer := pair.devA.allowedips.Lookup(dst)
+	send := func() { peer.WritePackets([][]byte{pkt}) }
 	send()
 	awaitPacket(t, pair.tunB, pkt, send)
 }
