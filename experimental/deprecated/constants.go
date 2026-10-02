@@ -186,7 +186,17 @@ var OptionMASQUELegacyFields = Note{
 	EnvName:           "MASQUE_LEGACY_FIELDS",
 }
 
+var OptionTunStack = Note{
+	Name:              "tun-stack",
+	Description:       "`stack` option in TUN",
+	DeprecatedVersion: "1.15.0",
+	ScheduledVersion:  "1.17.0",
+	EnvName:           "TUN_STACK",
+	MigrationLink:     "https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+}
+
 var Options = []Note{
+	OptionTunStack,
 	OptionMASQUELegacyFields,
 	OptionOutboundDNSRuleItem,
 	OptionMissingDomainResolver,
@@ -199,4 +209,5 @@ var Options = []Note{
 	OptionIndependentDNSCache,
 	OptionStoreRDRC,
 	OptionImplicitDefaultHTTPClient,
+	OptionTunStack,
 }

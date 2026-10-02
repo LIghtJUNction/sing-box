@@ -17,6 +17,8 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/service/oomkiller"
+	"github.com/sagernet/sing-box/transport/device"
 	ovpntransport "github.com/sagernet/sing-box/transport/openvpn"
 	ovpn "github.com/sagernet/sing-openvpn"
 	"github.com/sagernet/sing-tun"
@@ -43,24 +45,23 @@ var (
 
 type ClientEndpoint struct {
 	endpointBase
-	ctx               context.Context
-	loopContext       context.Context
-	cancelLoop        context.CancelFunc
-	dnsRouter         adapter.DNSRouter
-	outboundDialer    N.Dialer
-	queryOptions      adapter.DNSQueryOptions
-	client            *ovpn.Client
-	device            ovpntransport.Device
-	onDemand          bool
-	stateAccess       sync.Mutex
-	state             atomic.Pointer[clientState]
-	dnsTransport      *DNSTransport
-	deviceStarted     bool
-	readLoopDone      chan struct{}
-	statusAccess      sync.Mutex
-	statusUpdated     chan struct{}
-	terminalError     string
-	challengeLoopDone chan struct{}
+	ctx            context.Context
+	loopContext    context.Context
+	cancelLoop     context.CancelFunc
+	dnsRouter      adapter.DNSRouter
+	outboundDialer N.Dialer
+	queryOptions   adapter.DNSQueryOptions
+	client         *ovpn.Client
+	deviceOptions  *device.Options
+	device         device.Device
+	onDemand       bool
+	stateAccess    sync.Mutex
+	state          atomic.Pointer[clientState]
+	dnsTransport   *DNSTransport
+	deviceStarted  bool
+	statusAccess   sync.Mutex
+	statusUpdated  chan struct{}
+	terminalError  string
 }
 
 type clientState struct {
@@ -94,9 +95,6 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 		if success {
 			return
 		}
-		if clientEndpoint.device != nil {
-			_ = clientEndpoint.device.Close()
-		}
 		cancelLoop()
 	}()
 	clientOptions, err := clientEndpoint.buildClientOptions(options)
@@ -125,29 +123,35 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	if options.UDPTimeout != 0 {
 		udpTimeout = time.Duration(options.UDPTimeout)
 	}
-	device, err := ovpntransport.NewDevice(ovpntransport.DeviceOptions{
-		Context:         ctx,
-		Logger:          logger,
-		System:          options.System,
-		Handler:         clientEndpoint,
-		UDPTimeout:      udpTimeout,
-		ICMPTimeout:     C.ICMPTimeout,
-		UDPMapping:      tun.NATMapping(options.UDPMapping),
-		UDPFiltering:    tun.NATFiltering(options.UDPFiltering),
-		UDPNATMax:       options.UDPNATMax,
-		InterfaceFinder: service.FromContext[adapter.NetworkManager](ctx).InterfaceFinder(),
-		Name:            options.Name,
-		MTU:             options.MTU,
-		Configuration: ovpntransport.Configuration{
-			MTU:     options.MTU,
+	deviceMTU := options.MTU
+	if deviceMTU == 0 {
+		deviceMTU = ovpntransport.DefaultMTU
+	}
+	packetFrontHeadroom, packetRearHeadroom := clientOptions.DataPacketHeadroom()
+	clientEndpoint.deviceOptions = &device.Options{
+		Context:             ctx,
+		Logger:              logger,
+		System:              options.System,
+		Handler:             clientEndpoint,
+		UDPTimeout:          udpTimeout,
+		ICMPTimeout:         C.ICMPTimeout,
+		UDPMapping:          tun.NATMapping(options.UDPMapping),
+		UDPFiltering:        tun.NATFiltering(options.UDPFiltering),
+		UDPNATMax:           options.UDPNATMax,
+		InterfaceFinder:     service.FromContext[adapter.NetworkManager](ctx).InterfaceFinder(),
+		Name:                options.Name,
+		NamePrefix:          "ovpn",
+		MTU:                 deviceMTU,
+		PacketFrontHeadroom: packetFrontHeadroom,
+		PacketRearHeadroom:  packetRearHeadroom,
+		Configuration: device.Configuration{
+			MTU:     deviceMTU,
 			Address: clientOptions.Tunnel.LocalAddress,
 		},
-	})
-	if err != nil {
-		return nil, err
 	}
-	clientEndpoint.device = device
-	device.SetPacketWriter(clientEndpoint.writePacketBuffers)
+	clientOptions.IncomingPacketHeadroom = func() int {
+		return clientEndpoint.device.FrontHeadroom()
+	}
 	client, err := ovpn.NewClient(clientOptions)
 	if err != nil {
 		return nil, err
@@ -403,7 +407,6 @@ func buildClientDataChannelOptions(options option.OpenVPNClientEndpointOptions) 
 		AllowCompression: options.AllowCompression,
 		ReplayWindow:     options.ReplayWindow,
 		ReplayWindowTime: time.Duration(options.ReplayWindowTime),
-		PacketHeadroom:   ovpntransport.PacketHeadroom,
 	}
 }
 
@@ -515,7 +518,7 @@ func (c *ClientEndpoint) handleTunnelConfiguration(event ovpn.TunnelConfiguratio
 	c.updateState(func(state *clientState) {
 		state.tunnelConfigured = false
 	})
-	deviceConfiguration := ovpntransport.Configuration{
+	deviceConfiguration := device.Configuration{
 		MTU:       configuration.MTU,
 		Address:   configuration.Address,
 		BlockIPv6: configuration.BlockIPv6,
@@ -599,32 +602,65 @@ func (c *ClientEndpoint) uninstallDNSTransport(dnsTransport *DNSTransport) {
 	c.stateAccess.Unlock()
 }
 
-func (c *ClientEndpoint) Start(stage adapter.StartStage) error {
-	if stage != adapter.StartStatePostStart {
-		return nil
+func (c *ClientEndpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	switch stage {
+	case adapter.StartStateInitialize:
+		scope.Add(func() error {
+			c.notifyStatusUpdated()
+			return nil
+		})
+		scope.Add(func() error {
+			c.cancelLoop()
+			return nil
+		})
+		c.deviceOptions.MemoryPressure = oomkiller.MemoryPressure(c.ctx)
+		tunnelDevice, err := device.New(*c.deviceOptions)
+		if err != nil {
+			return err
+		}
+		scope.Add(tunnelDevice.Close)
+		tunnelDevice.SetPacketWriter(c.writePacketBuffers)
+		c.device = tunnelDevice
+		c.deviceOptions = nil
+	case adapter.StartStatePostStart:
+		var loopGroup sync.WaitGroup
+		scope.Add(func() error {
+			loopGroup.Wait()
+			return nil
+		})
+		err := c.client.Start()
+		if err != nil {
+			return err
+		}
+		scope.Add(c.client.Close)
+		c.stateAccess.Lock()
+		c.updateState(func(state *clientState) {
+			state.started = true
+		})
+		c.stateAccess.Unlock()
+		scope.Add(func() error {
+			c.stateAccess.Lock()
+			c.updateState(func(state *clientState) {
+				state.started = false
+			})
+			c.stateAccess.Unlock()
+			return nil
+		})
+		loopGroup.Go(func() {
+			c.readLoop(scope.Context())
+		})
+		loopGroup.Go(func() {
+			c.watchChallenges(scope.Context())
+		})
 	}
-	err := c.client.Start()
-	if err != nil {
-		return err
-	}
-	c.stateAccess.Lock()
-	c.updateState(func(state *clientState) {
-		state.started = true
-	})
-	c.readLoopDone = make(chan struct{})
-	c.challengeLoopDone = make(chan struct{})
-	c.stateAccess.Unlock()
-	go c.readLoop()
-	go c.watchChallenges()
 	return nil
 }
 
-func (c *ClientEndpoint) readLoop() {
-	defer close(c.readLoopDone)
+func (c *ClientEndpoint) readLoop(ctx context.Context) {
 	for {
-		packetBuffers, err := c.client.ReadDataPackets(c.loopContext)
+		packetBuffers, err := c.client.ReadDataPackets(ctx)
 		if err != nil {
-			if E.IsClosedOrCanceled(err) || c.loopContext.Err() != nil {
+			if E.IsClosedOrCanceled(err) || ctx.Err() != nil {
 				return
 			}
 			c.logger.Error(E.Cause(err, "client terminated"))
@@ -642,26 +678,6 @@ func (c *ClientEndpoint) readLoop() {
 	}
 }
 
-func (c *ClientEndpoint) Close() error {
-	c.stateAccess.Lock()
-	c.updateState(func(state *clientState) {
-		state.started = false
-	})
-	readLoopDone := c.readLoopDone
-	challengeLoopDone := c.challengeLoopDone
-	c.stateAccess.Unlock()
-	c.cancelLoop()
-	err := E.Errors(c.client.Close(), c.device.Close())
-	if readLoopDone != nil {
-		<-readLoopDone
-	}
-	if challengeLoopDone != nil {
-		<-challengeLoopDone
-	}
-	c.notifyStatusUpdated()
-	return err
-}
-
 func (c *ClientEndpoint) InterfaceUpdated(ctx context.Context) {
 	c.client.RestartSession()
 }
@@ -671,7 +687,9 @@ func (c *ClientEndpoint) OnDemand() bool {
 }
 
 func (c *ClientEndpoint) SetKeepIdleConnections(keep bool) {
-	if !keep {
+	if keep {
+		c.client.Resume()
+	} else {
 		c.client.Suspend()
 	}
 }

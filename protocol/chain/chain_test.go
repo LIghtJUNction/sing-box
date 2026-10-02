@@ -6,6 +6,7 @@ package chain
 
 import (
 	"context"
+	"io"
 	"net"
 	"slices"
 	"strconv"
@@ -65,11 +66,14 @@ func traceOf(ctx context.Context) *trace {
 }
 
 type fakeRegistry struct {
-	mu       sync.Mutex
-	created  []string // "tag@detour"
-	options  map[string][]fakeOptions
-	closed   map[string]int
-	closedMu sync.Mutex
+	mu                  sync.Mutex
+	created             []string // "tag@detour"
+	options             map[string][]fakeOptions
+	closed              map[string]int
+	closedMu            sync.Mutex
+	cloneStarted        chan struct{}
+	cloneCleanupEntered chan struct{}
+	cloneCleanupRelease <-chan struct{}
 }
 
 func newFakeRegistry() *fakeRegistry {
@@ -141,10 +145,29 @@ func (f *fakeOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 	return next.ListenPacket(ctx, M.ParseSocksaddr(f.Tag()+".server:1"))
 }
 
+func (f *fakeOutbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage == adapter.StartStateInitialize {
+		scope.Add(f.Close)
+		if f.name == "fail-on-clone-start" && f.detour != "" {
+			return E.New("clone initialization failed")
+		}
+		if f.name == "wait-on-clone-start" && f.detour != "" {
+			close(f.registry.cloneStarted)
+			<-scope.Context().Done()
+			return scope.Context().Err()
+		}
+	}
+	return nil
+}
+
 func (f *fakeOutbound) Close() error {
 	f.registry.closedMu.Lock()
 	f.registry.closed[f.label()]++
 	f.registry.closedMu.Unlock()
+	if f.name == "wait-on-clone-start" && f.detour != "" {
+		close(f.registry.cloneCleanupEntered)
+		<-f.registry.cloneCleanupRelease
+	}
 	return nil
 }
 
@@ -166,8 +189,12 @@ type fakeGroup struct {
 	tags    []string
 }
 
-func (g *fakeGroup) Now() string   { return g.tags[0] }
-func (g *fakeGroup) All() []string { return g.tags }
+func (g *fakeGroup) Selected(string) adapter.Outbound {
+	selected, _ := g.manager.Outbound(g.tags[0])
+	return selected
+}
+func (g *fakeGroup) All() []string                     { return g.tags }
+func (g *fakeGroup) AttachConnection(io.Closer) func() { return func() {} }
 
 func (g *fakeGroup) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	picked, _ := g.manager.Outbound(g.tags[0])
@@ -190,6 +217,7 @@ func (g *fakeGroup) ListenPacket(ctx context.Context, destination M.Socksaddr) (
 // ---- стенд ------------------------------------------------------------------
 
 type stand struct {
+	scope    *adapter.Scope
 	t        *testing.T
 	ctx      context.Context
 	registry *fakeRegistry
@@ -254,14 +282,14 @@ func newStand(t *testing.T) *stand {
 	ctx = service.ContextWith[option.EndpointOptionsRegistry](ctx, epRegistry)
 	ctx = service.ContextWith[adapter.EndpointRegistry](ctx, epRegistry)
 	ctx = service.ContextWith[log.Factory](ctx, logFactory)
-	epManager := endpoint.NewManager(logFactory.NewLogger("endpoint"), epRegistry)
-	manager = outbound.NewManager(logFactory.NewLogger("outbound"), registry, epManager, "")
+	epManager := endpoint.NewManager(epRegistry)
+	manager = outbound.NewManager(registry, epManager, "")
 	ctx = service.ContextWith[adapter.OutboundManager](ctx, manager)
 	ctx = service.ContextWith[adapter.EndpointManager](ctx, epManager)
 	manager.Initialize(func() (adapter.Outbound, error) {
 		return registry.CreateOutbound(ctx, nil, logFactory.NewLogger("direct"), "direct", C.TypeDirect, &option.DirectOutboundOptions{})
 	})
-	return &stand{t: t, ctx: ctx, registry: fakes, outbound: manager, endpoint: epManager}
+	return &stand{t: t, ctx: ctx, registry: fakes, outbound: manager, endpoint: epManager, scope: adapter.NewScope(ctx, logFactory.Logger())}
 }
 
 func itoa(v int) string {
@@ -297,10 +325,10 @@ func (s *stand) chain(tag string, positions []string, mutate ...func(*option.Cha
 
 func (s *stand) start() error {
 	for _, stage := range adapter.ListStartStages {
-		if err := s.endpoint.Start(stage); err != nil {
+		if err := s.scope.Start("endpoint", s.endpoint, stage); err != nil {
 			return err
 		}
-		if err := s.outbound.Start(stage); err != nil {
+		if err := s.scope.Start("outbound", s.outbound, stage); err != nil {
 			return err
 		}
 	}
@@ -312,7 +340,7 @@ func (s *stand) mustStart() {
 	if err := s.start(); err != nil {
 		s.t.Fatalf("start: %v", err)
 	}
-	s.t.Cleanup(func() { s.outbound.Close() })
+	s.t.Cleanup(func() { s.scope.Close() })
 }
 
 func (s *stand) chainOf(tag string) *Chain {
@@ -791,7 +819,7 @@ func TestChainCloseRemovesHopsAndClones(t *testing.T) {
 	if _, ok := s.outbound.Outbound("virt#0"); !ok {
 		t.Fatal("hop missing")
 	}
-	s.outbound.Close()
+	s.scope.Close()
 	if _, ok := s.outbound.Outbound("virt#0"); ok {
 		t.Fatal("hop must be removed on close")
 	}
@@ -1153,5 +1181,76 @@ func TestChainCloneConfigJSON(t *testing.T) {
 	c.evictIdle(time.Now().Add(c.idleTimeout + time.Second))
 	if _, err := c.CloneConfigJSON(1); err == nil {
 		t.Fatal("evicted link must not serve a config")
+	}
+}
+
+func TestCloneScopeCleansFailedInitialization(t *testing.T) {
+	s := newStand(t)
+	s.fake("in")
+	s.fake("exit", func(options *fakeOptions) { options.Name = "fail-on-clone-start" })
+	s.chain("virt", []string{"in", "exit"})
+	if err := s.start(); err == nil || !strings.Contains(err.Error(), "clone initialization failed") {
+		t.Fatalf("unexpected initialization result: %v", err)
+	}
+	if actual := s.registry.closed["exit[virt#0]"]; actual != 1 {
+		t.Fatalf("failed clone cleanup count: %d", actual)
+	}
+	if err := s.scope.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if actual := s.registry.closed["exit[virt#0]"]; actual != 1 {
+		t.Fatalf("failed clone cleanup repeated: %d", actual)
+	}
+}
+
+func TestChainScopeCloseJoinsInFlightCloneCleanup(t *testing.T) {
+	s := newStand(t)
+	s.fake("in")
+	s.fake("exit", func(options *fakeOptions) { options.Name = "wait-on-clone-start" })
+	s.add("choice", C.TypeURLTest, &fakeGroupOptions{Outbounds: []string{"exit"}})
+	s.chain("virt", []string{"in", "choice"})
+	s.mustStart()
+	s.registry.cloneStarted = make(chan struct{})
+	s.registry.cloneCleanupEntered = make(chan struct{})
+	release := make(chan struct{})
+	s.registry.cloneCleanupRelease = release
+	builder := make(chan error, 1)
+	leaf, _ := s.outbound.Outbound("exit")
+	go func() {
+		_, err := s.chainOf("virt").cloneFor(1, leaf)
+		builder <- err
+	}()
+	select {
+	case <-s.registry.cloneStarted:
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("clone did not enter initialization")
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- s.scope.Close() }()
+	select {
+	case <-s.registry.cloneCleanupEntered:
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("owner cancellation did not release clone initialization")
+	}
+	select {
+	case <-closed:
+		close(release)
+		t.Fatal("owner closed before in-flight clone cleanup finished")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(release)
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-builder; err == nil {
+		t.Fatal("canceled clone builder succeeded")
+	}
+	if actual := s.registry.closed["exit[virt#0]"]; actual != 1 {
+		t.Fatalf("in-flight clone cleanup count: %d", actual)
+	}
+	if _, exists := s.outbound.Outbound("virt#0"); exists {
+		t.Fatal("hops remained after joined cleanup")
 	}
 }

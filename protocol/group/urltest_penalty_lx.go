@@ -109,7 +109,7 @@ func (g *URLTestGroup) fastestByDelay(network string) adapter.Outbound {
 		if !supportsNetwork(detour, network) {
 			continue
 		}
-		history := g.history.LoadURLTestHistory(RealTag(g.outbound, detour))
+		history := g.history.LoadURLTestHistory(RealTag(detour, network))
 		if history == nil {
 			continue
 		}
@@ -124,7 +124,7 @@ func (g *URLTestGroup) fastestByDelay(network string) adapter.Outbound {
 // penaltyEmergency — аварийный режим: лучший-по-скорости набрал ≥ порога.
 func (g *URLTestGroup) penaltyEmergency(network string) bool {
 	fastest := g.fastestByDelay(network)
-	return fastest != nil && g.penaltyOf(RealTag(g.outbound, fastest)) >= penaltyThreshold
+	return fastest != nil && g.penaltyOf(RealTag(fastest, network)) >= penaltyThreshold
 }
 
 // penaltyBest — двухуровневое ранжирование (штрафы ↑, задержка ↑) среди узлов
@@ -137,7 +137,7 @@ func (g *URLTestGroup) penaltyBest(network string, excludeTag string) adapter.Ou
 		if !supportsNetwork(detour, network) {
 			continue
 		}
-		realTag := RealTag(g.outbound, detour)
+		realTag := RealTag(detour, network)
 		if realTag == excludeTag {
 			continue
 		}
@@ -223,9 +223,9 @@ func (g *URLTestGroup) penaltyFailoverDial(ctx context.Context, network string, 
 	if g.balancer != nil || !isPathDeadDialError(dialErr) {
 		return nil, nil, false
 	}
-	g.penaltyAdd(RealTag(g.outbound, failed))
+	g.penaltyAdd(RealTag(failed, network))
 	g.maybeForceRetest()
-	fallback := g.penaltyBest(network, RealTag(g.outbound, failed))
+	fallback := g.penaltyBest(network, RealTag(failed, network))
 	if fallback == nil {
 		return nil, nil, false
 	}
@@ -238,14 +238,14 @@ func (g *URLTestGroup) penaltyFailoverDial(ctx context.Context, network string, 
 	if err != nil {
 		g.logger.Error("lx penalty: fallback via ", fallback.Tag(), ": ", E.Cause(err, "dial"))
 		// Симметрия с апстримным поведением least_test для отказавшего дайла.
-		g.history.DeleteURLTestHistory(RealTag(g.outbound, fallback))
+		g.history.DeleteURLTestHistory(RealTag(fallback, network))
 		if isPathDeadDialError(err) {
-			g.penaltyAdd(RealTag(g.outbound, fallback))
+			g.penaltyAdd(RealTag(fallback, network))
 			g.maybeForceRetest()
 		}
 		return nil, nil, false
 	}
-	g.penaltyReset(RealTag(g.outbound, fallback))
+	g.penaltyReset(RealTag(fallback, network))
 	if g.passiveCheck && network == N.NetworkTCP {
 		g.markPassiveAlive(fallback.Tag())
 	}
@@ -288,7 +288,7 @@ func (g *URLTestGroup) penaltyTotal(network string) bool {
 		if !supportsNetwork(detour, network) {
 			continue
 		}
-		realTag := RealTag(g.outbound, detour)
+		realTag := RealTag(detour, network)
 		if g.history.LoadURLTestHistory(realTag) == nil {
 			continue
 		}

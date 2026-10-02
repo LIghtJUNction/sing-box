@@ -3,6 +3,7 @@ package trafficcontrol
 import (
 	"context"
 	"net"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -27,7 +28,7 @@ type TrackerMetadata struct {
 	// Detour carries the transport detour tail of the final outbound — the part the
 	// upstream Chain omits by design (Chain = routing groups + final outbound only).
 	// Resolved in newTrackerMetadata against the same atomic group snapshot, so a
-	// detour that points at a group reflects that group's live Now(). Order is from
+	// detour that points at a group reflects that group's network-specific selection. Order is from
 	// the final outbound outward (node → its detour → …).
 	Detour []string
 	// lx:end detour-chain
@@ -74,43 +75,27 @@ func (m *Manager) RoutedFlow(ctx context.Context, metadata adapter.InboundContex
 
 func (m *Manager) newTrackerMetadata(metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound, upload *atomic.Int64, download *atomic.Int64) TrackerMetadata {
 	id, _ := uuid.NewV4()
-	var (
-		chain        []string
-		next         string
-		outbound     string
-		outboundType string
-	)
-	if matchOutbound != nil {
-		next = matchOutbound.Tag()
-	} else {
-		next = m.outbound.Default().Tag()
-	}
-	// lx:begin detour-chain (SPEC 017)
-	// finalOutbound is the non-group outbound the upstream loop stops at; its detour
-	// tail (omitted from Chain by design) is unwound below into a separate field.
+	chain := common.Map(metadata.OutboundChain, adapter.Outbound.Tag)
+	slices.Reverse(chain)
 	var finalOutbound adapter.Outbound
-	seen := make(map[string]bool)
-	// lx:end detour-chain
-	for {
-		detour, loaded := m.outbound.Outbound(next)
-		if !loaded {
-			break
-		}
-		chain = append(chain, next)
-		outbound = detour.Tag()
-		outboundType = detour.Type()
-		seen[next] = true // lx: detour-chain — remember routing-chain tags to avoid revisiting
-		outboundGroup, isGroup := detour.(adapter.OutboundGroup)
-		if !isGroup {
-			finalOutbound = detour // lx: detour-chain
-			break
-		}
-		next = groupTagForNetwork(outboundGroup, metadata.Network)
+	if len(metadata.OutboundChain) > 0 {
+		finalOutbound = metadata.OutboundChain[len(metadata.OutboundChain)-1]
+	} else if matchOutbound != nil {
+		// Compatibility callers may not have a route-owned chain.
+		finalOutbound = matchOutbound
+	}
+	var outboundTag, outboundType string
+	if finalOutbound != nil {
+		outboundTag, outboundType = finalOutbound.Tag(), finalOutbound.Type()
+	}
+	seen := make(map[string]bool, len(chain))
+	for _, tag := range chain {
+		seen[tag] = true
 	}
 	// lx:begin detour-chain (SPEC 017)
 	// Walk the detour tail of the final outbound. Dependencies()[0] of a non-group
 	// outbound is exactly its detour (adapter/outbound/adapter.go); a detour that
-	// points at a group is descended via Now() against this same snapshot. seen
+	// points at a group uses Selected(metadata.Network). seen
 	// guards against detour cycles. Order: final outbound → outward.
 	var detourChain []string
 	// lx:begin chain
@@ -121,7 +106,7 @@ func (m *Manager) newTrackerMetadata(metadata adapter.InboundContext, matchedRul
 		finalOutbound = nil
 	}
 	// lx:end chain
-	for cur := finalOutbound; cur != nil; {
+	for cur := finalOutbound; cur != nil && m.outbound != nil; {
 		deps := cur.Dependencies()
 		if len(deps) == 0 || seen[deps[0]] {
 			break
@@ -133,7 +118,7 @@ func (m *Manager) newTrackerMetadata(metadata adapter.InboundContext, matchedRul
 		detourChain = append(detourChain, deps[0])
 		seen[deps[0]] = true
 		if group, isGroup := step.(adapter.OutboundGroup); isGroup {
-			now := group.Now()
+			now := groupTagForNetwork(group, metadata.Network)
 			if now == "" || seen[now] {
 				break
 			}
@@ -155,10 +140,10 @@ func (m *Manager) newTrackerMetadata(metadata adapter.InboundContext, matchedRul
 		CreatedAt:    time.Now(),
 		Upload:       upload,
 		Download:     download,
-		Chain:        common.Reverse(chain),
-		Detour:       detourChain, // lx: detour-chain (SPEC 017)
+		Chain:        chain,
+		Detour:       detourChain,
 		Rule:         matchedRule,
-		Outbound:     outbound,
+		Outbound:     outboundTag,
 		OutboundType: outboundType,
 	}
 }

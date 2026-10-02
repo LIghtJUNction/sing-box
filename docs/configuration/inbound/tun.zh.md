@@ -6,7 +6,7 @@ icon: material/new-box
 
     :material-plus: [auto_redirect_tproxy_mark](#auto_redirect_tproxy_mark)  
     :material-plus: [multi_queue](#multi_queue)  
-    :material-alert-decagram: [stack](#stack)
+    :material-delete-clock: [stack](#stack)
 
 !!! quote "sing-box 1.14.0 中的更改"
 
@@ -126,7 +126,6 @@ icon: material/new-box
 
   ... // UDP NAT 字段
 
-  "stack": "system",
   "multi_queue": false,
   "include_interface": [
     "lan0"
@@ -173,6 +172,7 @@ icon: material/new-box
   },
 
   // 已弃用
+  "stack": "system",
   "gso": false,
   "inet4_address": [
     "172.19.0.1/30"
@@ -271,17 +271,13 @@ TUN 接口上 DNS 的处理方式。
 
 `hijack` 在 `native` 之上额外执行：
 
-*Linux*：在不重写目的地址的情况下，只能劫持发往非本机地址的 DNS。发往本机接口地址（如 `127.0.0.53`
-或本机 LAN 接口 IP）的流量由内核 `local` 路由表在所有用户规则之前直接交付，
-`OUTPUT` 链 NAT 也无法对走 `lo` 的包生效。
+*Linux*：发往本机接口地址（如 `127.0.0.53` 或本机 LAN 接口 IP）的 DNS 不会被劫持。
 
-- 未启用 `auto_redirect` 时：通过 `iproute2` 规则让 53 端口跳过 `main` 表的
-  具体路由查找，把本来会经直连子网直接送达的 DNS 改走 TUN —— 不重写目的地址。
-- 启用 `auto_redirect` 时：53 端口流量被直接重定向至
+- 未启用 `auto_redirect` 时：发往直连子网的 53 端口流量也会经由 TUN 路由。
+- 启用 `auto_redirect` 时：53 端口流量被重定向至
   [`dns_address`](#dns_address)。
 
-*Windows 启用 [`strict_route`](#strict_route) 时*：通过 WFP 过滤器阻止经由非
-TUN 接口的 53 端口流量。
+*Windows 启用 [`strict_route`](#strict_route) 时*：阻止经由非 TUN 接口的 53 端口流量。
 
 #### dns_address
 
@@ -289,13 +285,11 @@ TUN 接口的 53 端口流量。
 
 [`dns_mode`](#dns_mode) 使用的 DNS 服务器地址列表。
 
-未设置时，sing-box 会按地址族在 [`address`](#address) 的第一个 IPv4/IPv6
-条目后面取下一个 IP 作为 DNS 服务器地址，并将流向这些推导地址的连接额外劫持到
-sing-box DNS 模块，等价于一条
-[`hijack-dns`](/zh/configuration/route/rule_action/#hijack-dns) 路由动作；这与此选项加入之前的行为一致。
+未设置时，使用 [`address`](#address) 中第一个 IPv4 和 IPv6 条目的下一个地址，
+发往该地址的连接按 [`hijack-dns`](/zh/configuration/route/rule_action/#hijack-dns) 路由动作处理。
 
-设置后，将不再自动劫持；如仍需此行为，请显式配置
-[`hijack-dns`](/zh/configuration/route/rule_action/#hijack-dns) 路由规则。
+设置后，请配置 [`hijack-dns`](/zh/configuration/route/rule_action/#hijack-dns)
+路由规则以处理发往这些地址的 DNS 流量。
 
 #### gso
 
@@ -557,9 +551,15 @@ sing-box DNS 模块，等价于一条
 
 #### stack
 
+!!! failure "已在 sing-box 1.15.0 废弃"
+
+    `stack` 已废弃，并将在 sing-box 1.17.0 中被移除。
+    移除 `stack` 参数以使用 sing-tun 自有的 TCP/IP stack。
+    参阅[迁移指南](/zh/migration/#迁移-tun-stack)。
+
 !!! quote "sing-box 1.15.0 中的更改"
 
-    :material-plus: 新增 `go` 栈，且它现在是默认值。
+    自 1.15.0 起，sing-tun 使用自有 TCP/IP stack，极限性能、能效以及内存占用均大幅领先于所有旧实现。
 
 !!! quote "sing-box 1.8.0 中的更改"
 
@@ -569,20 +569,15 @@ TCP/IP 栈。
 
 | 栈       | 描述                                                                                                  | 
 |----------|-------------------------------------------------------------------------------------------------------|
-| `go`     | 基于内置的用户态网络栈执行 L3 到 L4 转换                                                                |
 | `system` | 基于系统网络栈执行 L3 到 L4 转换                                                                        |
 | `gvisor` | 基于 [gVisor](https://github.com/google/gvisor) 虚拟网络栈执行 L3 到 L4 转换                            |
 | `mixed`  | 混合 `system` TCP 栈与 `gvisor` UDP 栈                                                                 |
-
-`go` 栈为 sing-box 编写，不依赖 gVisor，且内存占用显著低于 `gvisor` 与 `mixed` 栈。
-
-默认使用 `go` 栈。
 
 #### multi_queue
 
 !!! quote ""
 
-    仅在 Linux 下被支持，且需要 `go` 栈。
+    仅在 Linux 下被支持，且需要使用 sing-tun 自有的 TCP/IP stack。
 
 启用基于 `IFF_MULTI_QUEUE` 的多队列支持，使吞吐量能够随 CPU 核心数量扩展。
 

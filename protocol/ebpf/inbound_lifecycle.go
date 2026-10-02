@@ -8,9 +8,10 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
-func (i *Inbound) Start(stage adapter.StartStage) error {
+func (i *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	switch stage {
 	case adapter.StartStateInitialize:
+		scope.Add(i.Close)
 		i.startDebug()
 		if err := i.startSocketProtection(); err != nil {
 			return err
