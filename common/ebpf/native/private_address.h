@@ -1,5 +1,7 @@
 // Copyright 2026, sing-box contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Link-local capture protection adapted from tunless ReservedCapturePrefixes.
+// Copyright (c) 2026 tunless contributors; MIT notice: ../TUNLESS-LICENSE.
 
 #ifndef SING_BOX_EBPF_PRIVATE_ADDRESS_H
 #define SING_BOX_EBPF_PRIVATE_ADDRESS_H
@@ -39,13 +41,15 @@ static __attribute__((always_inline)) bool sb_ebpf_ipv4_prefix_match(
 }
 
 static __attribute__((always_inline)) bool sb_ebpf_ipv4_safety_bypass(const __u8 address[4]) {
-    return address[0] == 0U || address[0] == 127U || address[0] >= 224U;
+    return address[0] == 0U || address[0] == 127U || address[0] >= 224U ||
+        (address[0] == 169U && address[1] == 254U);
 }
 
 static __attribute__((always_inline)) bool sb_ebpf_ipv6_safety_bypass(const __u8 address[16]) {
     __u32 words[4];
     __builtin_memcpy(words, address, sizeof(words));
-    if ((words[0] | words[1] | words[2] | words[3]) == 0U || address[0] == 0xffU) return true;
+    if ((words[0] | words[1] | words[2] | words[3]) == 0U || address[0] == 0xffU ||
+        (address[0] == 0xfeU && (address[1] & 0xc0U) == 0x80U)) return true;
     if ((words[0] | words[1] | words[2]) != 0U) return false;
     if (address[12] == 0U && address[13] == 0U && address[14] == 0U && address[15] == 1U) return true;
     return address[12] == 0xffU;

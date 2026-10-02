@@ -72,16 +72,17 @@ func TestOriginalDestinationFromValue(t *testing.T) {
 		{
 			name: "IPv4",
 			value: originalDestinationValue{
-				Family: addressFamilyIPv4,
-				Port:   5353,
-				Addr:   [16]byte{198, 51, 100, 20},
+				Family:   addressFamilyIPv4,
+				Protocol: ProtocolTCP,
+				Port:     5353,
+				Addr:     [16]byte{198, 51, 100, 20},
 			},
 			expected: netip.MustParseAddrPort("198.51.100.20:5353"),
 		},
 		{
 			name: "IPv6",
 			value: func() originalDestinationValue {
-				value := originalDestinationValue{Family: addressFamilyIPv6, Port: 443, Flags: 1}
+				value := originalDestinationValue{Family: addressFamilyIPv6, Protocol: ProtocolUDP, Port: 443, Flags: 1}
 				value.Addr = netip.MustParseAddr("2001:db8::1").As16()
 				return value
 			}(),
@@ -99,6 +100,53 @@ func TestOriginalDestinationFromValue(t *testing.T) {
 			}
 			if actual.ConnectedUDP != (testCase.value.Flags&1 != 0) {
 				t.Fatalf("unexpected connected UDP flag: %v", actual.ConnectedUDP)
+			}
+		})
+	}
+}
+
+func TestOriginalDestinationRejectsMalformedRecords(t *testing.T) {
+	valid := originalDestinationValue{
+		Family: addressFamilyIPv4, Protocol: ProtocolUDP, Port: 53,
+		Addr: [16]byte{192, 0, 2, 53},
+	}
+	for _, test := range []struct {
+		name   string
+		change func(*originalDestinationValue)
+	}{
+		{"unknown_family", func(value *originalDestinationValue) { value.Family = 255 }},
+		{"unknown_protocol", func(value *originalDestinationValue) { value.Protocol = 255 }},
+		{"zero_port", func(value *originalDestinationValue) { value.Port = 0 }},
+		{"connected_TCP", func(value *originalDestinationValue) {
+			value.Protocol = ProtocolTCP
+			value.Flags = originalDestinationFlagConnectedUDP
+		}},
+		{"unknown_flags", func(value *originalDestinationValue) { value.Flags = 2 }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value := valid
+			test.change(&value)
+			if _, err := originalDestinationFromValue(value); err == nil {
+				t.Fatalf("accepted malformed original destination: %+v", value)
+			}
+		})
+	}
+}
+
+func TestOriginalDestinationPreservesMappedReplyAliasesAndDNS(t *testing.T) {
+	for _, address := range []string{"::ffff:192.0.2.53", "::ffff:0.0.0.0", "::"} {
+		t.Run(address, func(t *testing.T) {
+			value := originalDestinationValue{
+				Family: addressFamilyIPv6, Protocol: ProtocolUDP, Port: 53,
+				Addr: netip.MustParseAddr(address).As16(),
+			}
+			// Userspace reply aliases have no socket cookie or creation timestamp.
+			original, err := originalDestinationFromValue(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if original.Destination != netip.AddrPortFrom(netip.MustParseAddr(address).Unmap(), 53) {
+				t.Fatalf("mapped or DNS destination changed: %+v", original)
 			}
 		})
 	}

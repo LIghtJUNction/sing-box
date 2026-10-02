@@ -13,12 +13,14 @@ var (
 	fakeIPSafetyIPv4Prefixes = []netip.Prefix{
 		netip.MustParsePrefix("0.0.0.0/8"),
 		netip.MustParsePrefix("127.0.0.0/8"),
+		netip.MustParsePrefix("169.254.0.0/16"),
 		netip.MustParsePrefix("224.0.0.0/4"),
 	}
 	fakeIPSafetyIPv6Prefixes = []netip.Prefix{
 		netip.MustParsePrefix("::/128"),
 		netip.MustParsePrefix("::1/128"),
 		netip.MustParsePrefix("::ff00:0:0/104"),
+		netip.MustParsePrefix("fe80::/10"),
 		netip.MustParsePrefix("ff00::/8"),
 	}
 )

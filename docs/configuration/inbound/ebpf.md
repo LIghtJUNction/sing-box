@@ -142,8 +142,9 @@ separately.
 
 Bypass built-in private, carrier-grade NAT, and link-local destinations on the
 local data path. Default is `true`. Setting it to `false` does not disable the
-safety bypasses for ordinary non-DNS traffic, including unspecified, loopback,
-multicast, and exact local-host destinations. As documented under
+safety bypasses for ordinary non-DNS traffic, including link-local IPv4
+(`169.254.0.0/16`) and IPv6 (`fe80::/10`), unspecified, loopback, multicast,
+and exact local-host destinations. As documented under
 `local.dns_mode`, `hijack` handles port 53 before all destination bypasses.
 
 #### local.include_uid
@@ -243,7 +244,8 @@ shared data path. Default is `true` and is independent from
 `local.bypass_private_address`. Setting it to `false` still preserves safety
 bypass for ordinary non-DNS traffic to IPv4 unspecified (`0.0.0.0/8`), the
 complete IPv4 loopback range (`127.0.0.0/8`), IPv6 unspecified and loopback,
-IPv4/IPv6 multicast destinations, and exact host addresses. As documented
+IPv4/IPv6 multicast destinations, link-local IPv4 (`169.254.0.0/16`) and
+IPv6 (`fe80::/10`), and exact host addresses. As documented
 under `shared.dns_mode`, `hijack` handles port 53 before all destination
 bypasses.
 
