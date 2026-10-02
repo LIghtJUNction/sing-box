@@ -77,7 +77,7 @@ func (b *CgroupBackend) lookupOriginal(
 	if err != nil {
 		return OriginalDestination{}, E.Cause(err, "lookup original destination")
 	}
-	return originalDestinationFromValue(original)
+	return originalDestinationFromValueForProtocol(original, protocol)
 }
 
 func (b *CgroupBackend) RecoverUDPOriginal(listenerDestination netip.AddrPort) (OriginalDestination, error) {
@@ -99,6 +99,11 @@ func (b *CgroupBackend) RecoverUDPOriginal(listenerDestination netip.AddrPort) (
 	consumed, err := b.takeUDPRecoveryElement(&key, &original)
 	if err != nil {
 		return OriginalDestination{}, E.Cause(err, "lookup recoverable UDP original destination")
+	}
+	if _, err = originalDestinationFromValueForProtocol(original, ProtocolUDP); err != nil {
+		// Invalid consumed records must not be published or restored as recovery
+		// state. A lookup-only fallback leaves its bounded LRU input untouched.
+		return OriginalDestination{}, E.Cause(err, "validate recoverable UDP original destination")
 	}
 	recoveryOriginal := original
 	if err = updateMapWithFlags(
@@ -124,9 +129,17 @@ func (b *CgroupBackend) RecoverUDPOriginal(listenerDestination netip.AddrPort) (
 				E.Cause(err, "lookup concurrently restored UDP original destination"),
 			)
 		}
+		if _, err = originalDestinationFromValueForProtocol(existing, ProtocolUDP); err != nil {
+			return OriginalDestination{}, b.rollbackConsumedUDPRecovery(
+				&key,
+				&recoveryOriginal,
+				consumed,
+				E.Cause(err, "validate concurrently restored UDP original destination"),
+			)
+		}
 		original = existing
 	}
-	return originalDestinationFromValue(original)
+	return originalDestinationFromValueForProtocol(original, ProtocolUDP)
 }
 
 func (b *CgroupBackend) takeUDPRecoveryElement(
@@ -539,6 +552,15 @@ func (b *CgroupBackend) DeleteRedirect(protocol uint8, listenerDestination netip
 		var original originalDestinationValue
 		lookupErr := lookupMap(redirectMap, unsafe.Pointer(&key), unsafe.Pointer(&original))
 		if lookupErr == nil {
+			if _, err := originalDestinationFromValueForProtocol(original, ProtocolUDP); err != nil {
+				validationErr := E.Cause(err, "validate UDP original destination before retention")
+				// Cleanup was explicitly requested. Remove unusable state without
+				// copying it into recovery, and still report the malformed record.
+				if deleteErr := deleteMap(redirectMap, unsafe.Pointer(&key)); deleteErr != nil && !errors.Is(deleteErr, unix.ENOENT) {
+					return E.Errors(validationErr, E.Cause(deleteErr, "delete malformed UDP redirect"))
+				}
+				return validationErr
+			}
 			if recoveryErr := updateMap(
 				b.udpRecoveryMapFD,
 				unsafe.Pointer(&key),

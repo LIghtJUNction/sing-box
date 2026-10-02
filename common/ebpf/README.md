@@ -4,6 +4,14 @@ This directory contains the native eBPF backend used by the sing-box eBPF
 inbound. It is a maintainer document; user-facing configuration and platform
 requirements live in [`docs/configuration/inbound/ebpf.md`](../../docs/configuration/inbound/ebpf.md).
 
+The link-local safety predicates and original-destination record validation
+adapt bounded parts of [tunless `filter.go`](https://github.com/bojieli/tunless/blob/94a51884607d6829e14e9f3301a2db84a9e9f313/filter.go)
+and [Linux `session.go`](https://github.com/bojieli/tunless/blob/94a51884607d6829e14e9f3301a2db84a9e9f313/backend/linux/session.go)
+at commit `94a51884607d6829e14e9f3301a2db84a9e9f313`. Their MIT copyright and
+permission notice is retained in [`TUNLESS-LICENSE`](TUNLESS-LICENSE).
+The adaptations preserve sing-box DNS policy priority, multi-destination UDP
+reply aliases, and capability-selected cgroup/TC lifecycles.
+
 ## Responsibilities
 
 The Go side owns object loading, map lifetime, cgroup and TC attachments, policy
@@ -330,9 +338,10 @@ always populate the control map rather than relying on zero initialization.
 Host addresses are exact local `/32` or `/128` entries; an interface's entire
 prefix is never inserted. Configured FakeIP ranges are forced into interception
 before private-address and destination rule-set bypass; overlap with mandatory
-safety ranges is rejected. Shared mode additionally keeps multicast, unspecified,
-and the complete loopback ranges as unconditional local safety exceptions when
-private bypass is disabled.
+safety ranges is rejected. Disabling private bypass still preserves the safety
+exceptions for ordinary non-DNS traffic, including link-local IPv4
+`169.254.0.0/16` and IPv6 `fe80::/10`, unspecified, multicast, and loopback
+destinations. DNS interception retains the policy priority described above.
 
 ## Map inventory and sizing
 
