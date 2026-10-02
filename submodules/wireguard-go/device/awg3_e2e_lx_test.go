@@ -181,9 +181,16 @@ func TestAWG3EndToEnd(t *testing.T) {
 
 	// A -> B over the injection path (tightly allocated element).
 	pktInject := buildIPv4Packet(testIPA, testIPB, 8)
-	sendInject := func() { pair.devA.InputPacket(testIPB.AsSlice(), [][]byte{pktInject}) }
+	peer := pair.devA.allowedips.Lookup(testIPB.AsSlice())
+	sendInject := func() { peer.WritePackets([][]byte{pktInject}) }
 	sendInject()
 	awaitPacket(t, pair.tunB, pktInject, sendInject)
+
+	sendBatch := func() {
+		pair.devA.InputPackets([]*InputPacketRef{{Destination: testIPB.AsSlice(), PacketSlices: [][]byte{pktInject}}})
+	}
+	sendBatch()
+	awaitPacket(t, pair.tunB, pktInject, sendBatch)
 
 	// Wire format.
 	var sawInit, sawTransport, sawPaddedData bool

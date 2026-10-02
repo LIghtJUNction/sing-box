@@ -69,6 +69,8 @@ type Endpoint struct {
 	// lx: SPEC 020 — test seam standing in for a device.Up() failure, which needs
 	// a real bind to reproduce. Nil in production.
 	resumeErrHook func() error
+	// Tests may force the initial EventUp to finish before configuration.
+	beforeConfigureForTest func(*device.Device) error
 }
 
 // SetResumeErrHookForTest injects a Resume failure. Test-only.
@@ -368,29 +370,20 @@ func (e *Endpoint) Start(postStart bool) error {
 	wgDevice := device.NewDevice(e.options.Context, e.returnDevice, bind, logger, e.options.Workers)
 	// lx: passive self-heal keeps a dead NAT/DPI flow from pinning the endpoint.
 	wgDevice.SetGiveUpRebind(true, e.options.ListenPort == 0)
-	var ipcConf strings.Builder
-	ipcConf.WriteString(e.ipcConf)
-	for _, peer := range e.peers {
-		ipcConf.WriteString(peer.GenerateIpcLines())
-	}
-	err = wgDevice.IpcSet(ipcConf.String())
-	if err != nil {
-		wgDevice.Close()
-		return E.Cause(err, "setup wireguard: \n", ipcConf.String())
-	}
-	wgPeers := make([]*device.Peer, 0, len(e.peers))
-	for _, peer := range e.peers {
-		wgPeer, loaded := wgDevice.LookupActivePeer(peer.publicKey)
-		if !loaded {
-			wgDevice.Close()
-			return E.New("missing configured WireGuard peer")
+	domainPeers := make(map[device.NoisePublicKey]*peerConfig)
+	for peerIndex, peer := range e.peers {
+		if peer.destination.IsDomain() {
+			domainPeers[peer.publicKey] = &e.peers[peerIndex]
 		}
-		wgPeers = append(wgPeers, wgPeer)
-		if !peer.destination.IsDomain() {
-			continue
-		}
-		// The pinned AWG device exposes the resolver on each configured peer.
-		wgPeer.SetEndpointResolver(func() ([]conn.Endpoint, error) {
+	}
+	if len(domainPeers) > 0 {
+		// Install before IpcSet: enabling persistent keepalive can immediately
+		// start the first handshake while the device is already up.
+		wgDevice.SetEndpointResolverFunc(func(publicKey device.NoisePublicKey) ([]conn.Endpoint, error) {
+			peer, found := domainPeers[publicKey]
+			if !found {
+				return nil, nil
+			}
 			addresses, lookupErr := e.options.ResolvePeer(peer.destination.Fqdn)
 			if lookupErr != nil {
 				return nil, lookupErr
@@ -409,6 +402,32 @@ func (e *Endpoint) Start(postStart bool) error {
 			}
 			return endpoints, nil
 		})
+	}
+	if e.beforeConfigureForTest != nil {
+		if err := e.beforeConfigureForTest(wgDevice); err != nil {
+			wgDevice.Close()
+			return err
+		}
+	}
+	var ipcConf strings.Builder
+	ipcConf.WriteString(e.ipcConf)
+	for _, peer := range e.peers {
+		ipcConf.WriteString(peer.GenerateIpcLines())
+	}
+	err = wgDevice.IpcSet(ipcConf.String())
+	if err != nil {
+		wgDevice.Close()
+		return E.Cause(err, "setup wireguard: \n", ipcConf.String())
+	}
+	wgPeers := make([]*device.Peer, 0, len(e.peers))
+	for _, peer := range e.peers {
+		wgPeer, loaded := wgDevice.LookupActivePeer(peer.publicKey)
+		if !loaded {
+			wgDevice.Close()
+			return E.New("missing configured WireGuard peer")
+		}
+		wgPeers = append(wgPeers, wgPeer)
+
 	}
 	e.tunDevice.SetDevice(wgDevice, wgPeers)
 	e.device.Store(wgDevice)
