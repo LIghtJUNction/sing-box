@@ -23,6 +23,17 @@ func NewGroup() *Group {
 	return &Group{}
 }
 
+func (g *Group) Add(closer io.Closer, isExternal bool) (remove func()) {
+	g.access.Lock()
+	defer g.access.Unlock()
+	element := g.connections.PushBack(&groupConnItem{closer, isExternal})
+	return func() {
+		g.access.Lock()
+		defer g.access.Unlock()
+		g.connections.Remove(element)
+	}
+}
+
 func (g *Group) NewConn(conn net.Conn, isExternal bool) net.Conn {
 	g.access.Lock()
 	defer g.access.Unlock()
@@ -34,10 +45,10 @@ func (g *Group) NewPacketConn(conn net.PacketConn, isExternal bool) net.PacketCo
 	g.access.Lock()
 	defer g.access.Unlock()
 	item := g.connections.PushBack(&groupConnItem{conn, isExternal})
-	return &PacketConn{PacketConn: conn, group: g, element: item}
+	return newPacketConn(g, conn, item)
 }
 
-// N.PacketConn variant used by selector packet connections.
+// NewSingPacketConn registers a sing packet connection for external interruption.
 func (g *Group) NewSingPacketConn(conn N.PacketConn, isExternal bool) N.PacketConn {
 	g.access.Lock()
 	defer g.access.Unlock()
@@ -45,22 +56,19 @@ func (g *Group) NewSingPacketConn(conn N.PacketConn, isExternal bool) N.PacketCo
 	return &SingPacketConn{PacketConn: conn, group: g, element: item}
 }
 
-// The underlying Close must run outside g.access. A registered connection may
-// itself be another group's wrapper, so closing under the mutex can take two
-// group locks in opposite order and deadlock. Detach first, close afterwards.
 func (g *Group) Interrupt(interruptExternalConnections bool) {
 	g.access.Lock()
-	var toClose []io.Closer
+	var closers []io.Closer
 	for element := g.connections.Front(); element != nil; {
-		next := element.Next()
+		nextElement := element.Next()
 		if !element.Value.isExternal || interruptExternalConnections {
-			toClose = append(toClose, element.Value.conn)
+			closers = append(closers, element.Value.conn)
 			g.connections.Remove(element)
 		}
-		element = next
+		element = nextElement
 	}
 	g.access.Unlock()
-	for _, conn := range toClose {
-		conn.Close()
+	for _, closer := range closers {
+		closer.Close()
 	}
 }

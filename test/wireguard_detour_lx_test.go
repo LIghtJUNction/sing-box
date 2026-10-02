@@ -116,7 +116,7 @@ func testAWGOverAWGDetour(t *testing.T, outerMTU uint32, innerMTU uint32, basePo
 					Peers: []option.WireGuardPeer{
 						{
 							PublicKey:  clientOuterPublic,
-							AllowedIPs: badoption.Listable[netip.Prefix]{netip.MustParsePrefix("10.90.0.2/32")},
+							AllowedIPs: option.LegacyListable[netip.Prefix]{netip.MustParsePrefix("10.90.0.2/32")},
 						},
 					},
 				},
@@ -133,7 +133,7 @@ func testAWGOverAWGDetour(t *testing.T, outerMTU uint32, innerMTU uint32, basePo
 					Peers: []option.WireGuardPeer{
 						{
 							PublicKey:  clientInnerPublic,
-							AllowedIPs: badoption.Listable[netip.Prefix]{netip.MustParsePrefix("10.91.0.2/32")},
+							AllowedIPs: option.LegacyListable[netip.Prefix]{netip.MustParsePrefix("10.91.0.2/32")},
 						},
 					},
 				},
@@ -198,7 +198,7 @@ func testAWGOverAWGDetour(t *testing.T, outerMTU uint32, innerMTU uint32, basePo
 							Address:    "127.0.0.1",
 							Port:       outerUDPPort,
 							PublicKey:  serverOuterPublic,
-							AllowedIPs: badoption.Listable[netip.Prefix]{netip.MustParsePrefix("10.90.0.1/32")},
+							AllowedIPs: option.LegacyListable[netip.Prefix]{netip.MustParsePrefix("10.90.0.1/32")},
 						},
 					},
 				},
@@ -216,7 +216,7 @@ func testAWGOverAWGDetour(t *testing.T, outerMTU uint32, innerMTU uint32, basePo
 							Address:    "10.90.0.1",
 							Port:       innerUDPPort,
 							PublicKey:  serverInnerPublic,
-							AllowedIPs: badoption.Listable[netip.Prefix]{netip.MustParsePrefix("10.91.0.1/32")},
+							AllowedIPs: option.LegacyListable[netip.Prefix]{netip.MustParsePrefix("10.91.0.1/32")},
 						},
 					},
 					DialerOptions: option.DialerOptions{

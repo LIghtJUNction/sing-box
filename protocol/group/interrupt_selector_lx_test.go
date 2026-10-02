@@ -1,22 +1,13 @@
-// lx: проверка того, доходит ли interrupt_exist_connections до реального
-// трафика селектора.
-//
-// Утверждение, которое проверяется: соединение, пришедшее из inbound (то есть
-// через Selector.NewConnection — именно так его отдаёт роутер, route/route.go:175),
-// НЕ регистрируется в s.interruptGroup, потому что Selector.NewConnection
-// передаёт в ConnectionManager `selected`, а не `s`, и собственный
-// Selector.DialContext (единственное место регистрации, selector.go:154)
-// не вызывается.
-//
-// Тест намеренно НЕ моделирует interrupt.Group отдельно: он поднимает
-// настоящий Selector и настоящий route.ConnectionManager и смотрит на факт
-// закрытия живого сокета при SelectOutbound.
+// Selector interruption must cover both detour dials and connections routed
+// through a selected group. The inbound tests use the real Router and
+// ConnectionManager so they also exercise group resolution and registration.
 
 package group
 
 import (
 	"context"
 	"net"
+	"net/netip"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,6 +16,8 @@ import (
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/interrupt"
 	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/route"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
@@ -76,6 +69,36 @@ func (m *stubOutboundManager) Outbounds() []adapter.Outbound {
 
 func (m *stubOutboundManager) Default() adapter.Outbound { return nil }
 
+func newSelectorScope(t *testing.T, ctx context.Context) *adapter.Scope {
+	t.Helper()
+	scope := adapter.NewScope(ctx, log.NewNOPFactory().NewLogger("selector-test"))
+	t.Cleanup(func() { _ = scope.Close() })
+	return scope
+}
+
+// Only discovery services are stubbed. Actual Router.routeConnection resolves
+// the outbound chain and attaches its closer before dispatching to the leaf.
+type selectedOutboundManager struct {
+	adapter.OutboundManager
+	selected adapter.Outbound
+}
+
+func (m *selectedOutboundManager) Default() adapter.Outbound { return m.selected }
+
+type emptyReverseDNS struct{ adapter.DNSRouter }
+
+func (emptyReverseDNS) LookupReverseMapping(netip.Addr) (string, bool) { return "", false }
+
+func routeSelectorConnection(selector *Selector, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+	ctx := service.ContextWith[adapter.OutboundManager](selector.ctx, &selectedOutboundManager{
+		OutboundManager: selector.outbound,
+		selected:        selector,
+	})
+	ctx = service.ContextWith[adapter.DNSRouter](ctx, emptyReverseDNS{})
+	router := route.NewRouter(ctx, log.NewNOPFactory(), option.RouteOptions{}, option.DNSOptions{})
+	router.RouteConnectionEx(ctx, conn, metadata, onClose)
+}
+
 // newSelectorUnderTest поднимает настоящий Selector над двумя узлами,
 // с настоящим route.ConnectionManager в контексте.
 func newSelectorUnderTest(t *testing.T, interruptExisting bool) (*Selector, *probeNode, *probeNode) {
@@ -97,7 +120,6 @@ func newSelectorUnderTest(t *testing.T, interruptExisting bool) (*Selector, *pro
 		Adapter:                      outbound.NewAdapter(C.TypeSelector, "sel", nil, []string{"node-a", "node-b"}),
 		ctx:                          ctx,
 		outbound:                     mgr,
-		connection:                   service.FromContext[adapter.ConnectionManager](ctx),
 		logger:                       logger.NOP(),
 		tags:                         []string{"node-a", "node-b"},
 		defaultTag:                   "node-a",
@@ -105,7 +127,7 @@ func newSelectorUnderTest(t *testing.T, interruptExisting bool) (*Selector, *pro
 		interruptGroup:               interrupt.NewGroup(),
 		interruptExternalConnections: interruptExisting,
 	}
-	if err := sel.Start(); err != nil {
+	if err := sel.Start(adapter.StartStateStart, newSelectorScope(t, ctx)); err != nil {
 		t.Fatalf("Selector.Start: %v", err)
 	}
 	return sel, nodeA, nodeB
@@ -118,6 +140,7 @@ func TestLxSelectorInterruptViaDialContext(t *testing.T) {
 	sel, nodeA, _ := newSelectorUnderTest(t, true)
 
 	remote, local := net.Pipe() // local отдаём узлу, remote держим у себя
+	t.Cleanup(func() { _ = remote.Close(); _ = local.Close() })
 	nodeA.makeConn = func() net.Conn { return local }
 
 	ctx := context.Background()
@@ -138,26 +161,28 @@ func TestLxSelectorInterruptViaDialContext(t *testing.T) {
 	}
 }
 
-// Путь 2 — селектор как HANDLER (роутер отдаёт соединение через NewConnection).
-// Это путь всего inbound-трафика: route/route.go:175.
-// Проверяем, рвётся ли соединение при переключении узла.
+// Inbound traffic: Router resolves the group to its selected leaf, registers
+// the inbound connection with every group, then passes the leaf to the real
+// ConnectionManager. Switching the selector must close both live sockets.
 func TestLxSelectorInterruptViaNewConnection(t *testing.T) {
 	sel, nodeA, _ := newSelectorUnderTest(t, true)
 
 	// upstreamRemote/upstreamLocal — «сокет до узла», его и должен рвать interrupt.
 	upstreamRemote, upstreamLocal := net.Pipe()
+	t.Cleanup(func() { _ = upstreamRemote.Close(); _ = upstreamLocal.Close() })
 	nodeA.makeConn = func() net.Conn { return upstreamLocal }
 
 	// inboundClient/inboundServer — «сокет от приложения», его отдаёт роутер.
 	inboundClient, inboundServer := net.Pipe()
 	defer inboundClient.Close()
+	t.Cleanup(func() { _ = inboundServer.Close() })
 
 	metadata := adapter.InboundContext{
 		Network:     N.NetworkTCP,
 		Destination: M.ParseSocksaddr("example.com:80"),
 	}
 
-	go sel.NewConnection(context.Background(), inboundServer, metadata, func(it error) {})
+	go routeSelectorConnection(sel, inboundServer, metadata, func(it error) {})
 
 	// Ждём, пока узел реально сдиалит.
 	deadline := time.Now().Add(2 * time.Second)
@@ -192,8 +217,8 @@ func (n *handlerNode) NewConnection(ctx context.Context, conn net.Conn, metadata
 	n.held.Store(&conn)
 }
 
-// Путь 3 — selected сам ConnectionHandler (вложенная группа / dns).
-// v1-фикс (selected → s) эту ветку не покрывал; обёртка входящего — покрывает.
+// The selected leaf implements ConnectionHandler, so Router bypasses the
+// ConnectionManager. Group registration must still interrupt the inbound.
 func TestLxSelectorInterruptHandlerBranch(t *testing.T) {
 	nodeA := &handlerNode{probeNode: probeNode{tag: "node-a"}}
 	nodeB := &probeNode{tag: "node-b"}
@@ -211,7 +236,6 @@ func TestLxSelectorInterruptHandlerBranch(t *testing.T) {
 		Adapter:                      outbound.NewAdapter(C.TypeSelector, "sel", nil, []string{"node-a", "node-b"}),
 		ctx:                          ctx,
 		outbound:                     mgr,
-		connection:                   service.FromContext[adapter.ConnectionManager](ctx),
 		logger:                       logger.NOP(),
 		tags:                         []string{"node-a", "node-b"},
 		defaultTag:                   "node-a",
@@ -219,18 +243,19 @@ func TestLxSelectorInterruptHandlerBranch(t *testing.T) {
 		interruptGroup:               interrupt.NewGroup(),
 		interruptExternalConnections: true,
 	}
-	if err := sel.Start(); err != nil {
+	if err := sel.Start(adapter.StartStateStart, newSelectorScope(t, ctx)); err != nil {
 		t.Fatalf("Selector.Start: %v", err)
 	}
 
 	inboundClient, inboundServer := net.Pipe()
 	defer inboundClient.Close()
+	t.Cleanup(func() { _ = inboundServer.Close() })
 
 	metadata := adapter.InboundContext{
 		Network:     N.NetworkTCP,
 		Destination: M.ParseSocksaddr("example.com:80"),
 	}
-	sel.NewConnection(context.Background(), inboundServer, metadata, func(it error) {})
+	routeSelectorConnection(sel, inboundServer, metadata, func(it error) {})
 
 	if nodeA.held.Load() == nil {
 		t.Fatal("handler-узел не получил соединение — окружение нерабочее")
@@ -280,16 +305,18 @@ func TestLxSelectorHandlerPathSanity(t *testing.T) {
 	sel, nodeA, _ := newSelectorUnderTest(t, true)
 
 	upstreamRemote, upstreamLocal := net.Pipe()
+	t.Cleanup(func() { _ = upstreamRemote.Close(); _ = upstreamLocal.Close() })
 	nodeA.makeConn = func() net.Conn { return upstreamLocal }
 
 	inboundClient, inboundServer := net.Pipe()
 	defer inboundClient.Close()
+	t.Cleanup(func() { _ = inboundServer.Close() })
 
 	metadata := adapter.InboundContext{
 		Network:     N.NetworkTCP,
 		Destination: M.ParseSocksaddr("example.com:80"),
 	}
-	go sel.NewConnection(context.Background(), inboundServer, metadata, func(it error) {})
+	go routeSelectorConnection(sel, inboundServer, metadata, func(it error) {})
 
 	deadline := time.Now().Add(2 * time.Second)
 	for nodeA.dialed.Load() == 0 && time.Now().Before(deadline) {

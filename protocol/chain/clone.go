@@ -28,6 +28,7 @@ type clone struct {
 	key      cloneKey
 	position int
 	inner    adapter.Outbound
+	scope    *adapter.Scope
 	info     cloneInfo
 	// configJSON — SPEC 075: effective post-transform options in config-file
 	// form ({type, tag, ...}), snapshotted at creation for GetChainCloneConfig.
@@ -88,7 +89,7 @@ func (c *clone) release() {
 func (c *clone) close() error {
 	var err error
 	c.closeOnce.Do(func() {
-		err = common.Close(c.inner)
+		err = c.scope.Close()
 	})
 	return err
 }
@@ -182,7 +183,6 @@ func (c *Chain) cloneFor(position int, leaf adapter.Outbound) (*clone, error) {
 	created, err := c.createClone(position, leaf)
 
 	c.cloneMu.Lock()
-	delete(c.inflight, key)
 	if err == nil {
 		if c.closed {
 			err = E.New("chain is closed")
@@ -192,11 +192,14 @@ func (c *Chain) cloneFor(position int, leaf adapter.Outbound) (*clone, error) {
 	}
 	call.clone, call.err = created, err
 	c.cloneMu.Unlock()
+	if err != nil && created != nil {
+		created.close()
+	}
+	c.cloneMu.Lock()
+	delete(c.inflight, key)
 	close(call.done)
+	c.cloneMu.Unlock()
 	if err != nil {
-		if created != nil {
-			created.close()
-		}
 		c.logger.Error("clone ", leaf.Tag(), "@", position, ": ", err)
 		return nil, err
 	}
@@ -224,8 +227,9 @@ func (c *Chain) createClone(position int, leaf adapter.Outbound) (*clone, error)
 		cloneLogger = c.logger
 	}
 	var created adapter.Outbound
+	cloneScope := adapter.NewScope(c.ctx, cloneLogger)
 	labels := pprof.Labels("lx.chain", c.Tag(), "lx.pos", strconv.Itoa(position), "lx.leaf", leaf.Tag())
-	pprof.Do(c.ctx, labels, func(ctx context.Context) {
+	pprof.Do(cloneScope.Context(), labels, func(ctx context.Context) {
 		if built.isEndpoint {
 			registry := service.FromContext[adapter.EndpointRegistry](ctx)
 			if registry == nil {
@@ -245,22 +249,27 @@ func (c *Chain) createClone(position int, leaf adapter.Outbound) (*clone, error)
 			err = E.Cause(err, "create ", built.typeName, " clone")
 			return
 		}
-		for _, stage := range adapter.ListStartStages {
-			err = adapter.LegacyStart(created, stage)
-			if err != nil {
-				common.Close(created)
-				err = E.Cause(err, stage, " clone")
-				return
+		if lifecycle, isLifecycle := created.(adapter.Lifecycle); isLifecycle {
+			for _, stage := range adapter.ListStartStages {
+				err = cloneScope.Start(loggerTag, lifecycle, stage)
+				if err != nil {
+					err = E.Cause(err, stage, " clone")
+					return
+				}
 			}
+		} else {
+			cloneScope.Add(func() error { return common.Close(created) })
 		}
 	})
 	if err != nil {
+		cloneScope.Close()
 		return nil, err
 	}
 	cl := &clone{
 		key:        cloneKey{position: position, leafTag: leaf.Tag()},
 		position:   position,
 		inner:      created,
+		scope:      cloneScope,
 		info:       built.info,
 		configJSON: configJSON,
 		createdAt:  time.Now(),

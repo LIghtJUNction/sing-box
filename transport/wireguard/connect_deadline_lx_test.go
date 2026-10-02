@@ -1,5 +1,3 @@
-//go:build with_gvisor
-
 package wireguard
 
 // lx:begin SPEC 052 netstack connect deadline
@@ -10,13 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sagernet/gvisor/pkg/tcpip"
-	"github.com/sagernet/gvisor/pkg/tcpip/header"
-	"github.com/sagernet/gvisor/pkg/tcpip/link/channel"
-	"github.com/sagernet/gvisor/pkg/tcpip/network/ipv4"
-	"github.com/sagernet/gvisor/pkg/tcpip/stack"
-	"github.com/sagernet/gvisor/pkg/tcpip/transport/tcp"
+	"net/netip"
+	"sync/atomic"
+
 	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing/common/buf"
+	"github.com/sagernet/sing/common/logger"
+	M "github.com/sagernet/sing/common/metadata"
 )
 
 // TestConnectContextLx_budget pins the deadline contract: a bare parent gets
@@ -44,49 +43,43 @@ func TestConnectContextLx_budget(t *testing.T) {
 	}
 }
 
-// TestDialTCPWithBind_deadlineCutsBlackholeConnect is the SPEC 052 regression:
-// a connect into a silent blackhole must be cut by the ctx deadline instead of
-// waiting out gVisor's full SYN backoff (~127s). The stack's NIC is a channel
-// endpoint nobody reads — SYNs vanish, exactly a dead tunnel path. The parent
-// ctx carries a short deadline so the test proves the ctx path works without
-// sitting through the production 15s budget.
-func TestDialTCPWithBind_deadlineCutsBlackholeConnect(t *testing.T) {
-	s := stack.New(stack.Options{
-		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol},
-		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol},
+// The native Go stack connect must honor the scoped deadline even when every
+// SYN is silently discarded. This exercises the actual stackDevice dial path.
+func TestStackDeviceDeadlineCutsBlackholeConnect(t *testing.T) {
+	memoryTun := tun.NewMemoryTun(tun.MemoryTunOptions{
+		MTU:      1500,
+		Outbound: func(packets []*buf.Buffer) { buf.ReleaseMulti(packets) },
 	})
+	s, err := tun.NewGo(tun.StackOptions{
+		Context:    context.Background(),
+		Tun:        memoryTun,
+		TunOptions: tun.Options{MTU: 1500},
+		Logger:     logger.NOP(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer s.Close()
-	ep := channel.New(8, 1500, "")
-	if err := s.CreateNIC(1, ep); err != nil {
-		t.Fatalf("CreateNIC: %s", err)
+	defer memoryTun.Close()
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
 	}
-	localAddr := tcpip.AddrFrom4([4]byte{10, 99, 0, 2})
-	if err := s.AddProtocolAddress(1, tcpip.ProtocolAddress{
-		Protocol:          ipv4.ProtocolNumber,
-		AddressWithPrefix: tcpip.AddressWithPrefix{Address: localAddr, PrefixLen: 32},
-	}, stack.AddressProperties{}); err != nil {
-		t.Fatalf("AddProtocolAddress: %s", err)
+	w := &stackDevice{
+		stack:        s,
+		activeTCP:    new(atomic.Int64),
+		inet4Address: netip.MustParseAddr("10.99.0.2"),
 	}
-	s.SetRouteTable([]tcpip.Route{{Destination: header.IPv4EmptySubnet, NIC: 1}})
-
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	_, err := DialTCPWithBind(ctx, s, tcpip.FullAddress{}, tcpip.FullAddress{
-		NIC:  1,
-		Addr: tcpip.AddrFrom4([4]byte{203, 0, 113, 5}),
-		Port: 80,
-	}, ipv4.ProtocolNumber)
-	elapsed := time.Since(start)
-	if err == nil {
-		t.Fatal("a blackholed connect must fail")
-	}
+	_, err = w.DialContext(ctx, "tcp", M.ParseSocksaddr("203.0.113.5:80"))
 	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("the failure must be the ctx deadline (classifiable), got: %v", err)
+		t.Fatalf("the failure must be the ctx deadline, got: %v", err)
 	}
-	if elapsed > 2*time.Second {
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Fatalf("the deadline must cut the connect promptly, took %v", elapsed)
 	}
+	if live := w.CurrentEstablished(); live != 0 {
+		t.Fatalf("a failed connect must not count as live, got %d", live)
+	}
 }
-
-// lx:end SPEC 052

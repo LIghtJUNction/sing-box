@@ -1,5 +1,3 @@
-//go:build with_gvisor
-
 package wireguard
 
 // lx:begin SPEC 052 netstack connect deadline
@@ -11,12 +9,12 @@ import (
 )
 
 // connectContextLx bounds the CONNECT phase of a TCP dial through the endpoint's
-// gVisor netstack (SPEC 052).
+// userspace stack (SPEC 052).
 //
 // Why it exists: C.TCPConnectTimeout (5s) lives exclusively in the system-socket
 // net.Dialer, and no layer above (route, groups, detour, tun inbound) puts a
 // deadline on the ctx of a user-traffic dial — so a netstack dial's only bound
-// is gVisor's SYN retransmit machinery, which gives up after ~127s (six
+// is the stack's SYN retransmit machinery, which gives up after ~127s (six
 // retransmits, 1+2+4+8+16+32+64). On any silent blackhole (Wi-Fi dropping UDP
 // to the peer, a dead node) every dial through the tunnel hangs those ~127s
 // with no error to react to. Inherited upstream shape, not an lx regression.

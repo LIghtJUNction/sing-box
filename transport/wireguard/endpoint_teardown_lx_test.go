@@ -1,5 +1,3 @@
-//go:build with_gvisor
-
 // lx:begin idle-suspend
 
 package wireguard
@@ -15,7 +13,7 @@ import (
 
 func mustSocksaddr(s string) M.Socksaddr { return M.ParseSocksaddr(s) }
 
-// newTeardownTestEndpoint builds a REAL endpoint (gVisor stack device included,
+// newTeardownTestEndpoint builds a REAL endpoint (Go stack device included,
 // no network I/O) so the teardown → rebuild cycle exercises the actual one-shot
 // objects rather than a nil stub. Peers use a literal IP, so no resolver runs.
 func newTeardownTestEndpoint(t *testing.T) *Endpoint {
@@ -34,18 +32,16 @@ func newTeardownTestEndpoint(t *testing.T) *Endpoint {
 		}},
 	})
 	if err != nil {
-		// No Skip inside the test: a silent skip once hid this whole file from
-		// the suite. The stack device needs `with_gvisor` (see NewDevice), so
-		// the requirement lives in this file's build tag instead — every real
-		// test run (CI test.yml, Makefile, AAR) carries that tag, and here a
-		// construction failure is a real failure.
 		t.Fatalf("endpoint construction failed: %v", err)
+	}
+	if err := e.Initialize(nil); err != nil {
+		t.Fatalf("endpoint initialization failed: %v", err)
 	}
 	return e
 }
 
 // TestTeardownRebuildCycle: Teardown releases the tun device (and with it the
-// gVisor netstack — the ~5.9 MB level-3 targets), Rebuild installs a fresh one.
+// userspace stack — the ~5.9 MB level-3 targets), Rebuild installs a fresh one.
 // The one-shot nature of the closed objects (closeOnce + closed channels) is
 // exactly why a rebuild must create a NEW device instead of reusing it, so this
 // pins that a second cycle works too.

@@ -850,6 +850,13 @@ func (o *Outbound) lookup(ctx context.Context, domain string) ([]netip.Addr, err
 	return o.dnsRouter.Lookup(ctx, domain, adapter.DNSQueryOptions{})
 }
 
+func (o *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage == adapter.StartStateInitialize {
+		scope.Add(o.Close)
+	}
+	return nil
+}
+
 func (o *Outbound) Close() error {
 	o.runMu.Lock()
 	if o.closed {

@@ -422,8 +422,13 @@ func (s *URLTest) ActiveTags() []string {
 		}
 		// Cold start: pool not yet filled — fall back to the single current pick.
 	}
-	if now := s.Now(); now != "" {
-		return []string{now}
+	var tags []string
+	for _, network := range []string{"tcp", "udp"} {
+		if selected := s.Selected(network); selected != nil {
+			if len(tags) == 0 || tags[0] != selected.Tag() {
+				tags = append(tags, selected.Tag())
+			}
+		}
 	}
-	return nil
+	return tags
 }

@@ -44,6 +44,7 @@ func RegisterOutbound(registry *outbound.Registry) {
 
 var (
 	_ adapter.Outbound                = (*Chain)(nil)
+	_ adapter.Lifecycle               = (*Chain)(nil)
 	_ adapter.ChainPathProvider       = (*Chain)(nil)
 	_ adapter.ChainStatusProvider     = (*Chain)(nil)
 	_ adapter.ChainController         = (*Chain)(nil)
@@ -55,6 +56,7 @@ var (
 type Chain struct {
 	outbound.Adapter
 	ctx        context.Context
+	scope      *adapter.Scope
 	router     adapter.Router
 	logger     log.ContextLogger
 	logFactory log.Factory
@@ -161,7 +163,19 @@ func (c *Chain) hopTag(index int) string {
 
 // Start: резолв позиций, валидация типов и патчей по всем достижимым узлам,
 // регистрация хопов, прогрев детерминированных позиций, тикер эвикшна.
-func (c *Chain) Start() error {
+func (c *Chain) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	switch stage {
+	case adapter.StartStateInitialize:
+		c.scope = scope
+		c.ctx = scope.Context()
+		scope.Add(c.Close)
+	case adapter.StartStateStart:
+		return c.start()
+	}
+	return nil
+}
+
+func (c *Chain) start() error {
 	registrar, ok := c.outbound.(adapter.InternalOutboundRegistrar)
 	if !ok {
 		return E.New("outbound manager does not support chain hops")
@@ -243,7 +257,7 @@ func (c *Chain) Start() error {
 
 // preload поднимает звенья позиций, чей выбор детерминирован на старте:
 // узлы и селекторы любой вложенности; urltest на пути выбора — стоп (у него на
-// старте нет замеров, Now() случаен). Ошибка прогрева = ошибка старта.
+// старте нет замеров, Selected(TCP) случаен). Ошибка прогрева = ошибка старта.
 func (c *Chain) preload() error {
 	for i := 1; i < len(c.tags); i++ {
 		if c.disabled[i].Load() {
@@ -260,7 +274,7 @@ func (c *Chain) preload() error {
 	return nil
 }
 
-// deterministicLeaf: лист → он сам; selector → рекурсивно по Now(); urltest и
+// deterministicLeaf: лист → он сам; selector → рекурсивно по Selected(TCP); urltest и
 // прочие группы → nil.
 func deterministicLeaf(manager adapter.OutboundManager, target adapter.Outbound) adapter.Outbound {
 	seen := make(map[string]bool)
@@ -272,7 +286,11 @@ func deterministicLeaf(manager adapter.OutboundManager, target adapter.Outbound)
 		if target.Type() != C.TypeSelector {
 			return nil
 		}
-		now := group.Now()
+		selected := group.Selected(N.NetworkTCP)
+		if selected == nil {
+			return nil
+		}
+		now := selected.Tag()
 		if now == "" || seen[now] {
 			return nil
 		}
@@ -377,7 +395,16 @@ func (c *Chain) Close() error {
 		clones = append(clones, cl)
 		delete(c.clones, key)
 	}
+	inflight := make([]<-chan struct{}, 0, len(c.inflight))
+	for _, call := range c.inflight {
+		inflight = append(inflight, call.done)
+	}
 	c.cloneMu.Unlock()
+	// Join builders before releasing the lower hops they may still use. Their
+	// contexts are canceled by the owner scope before this cleanup runs.
+	for _, done := range inflight {
+		<-done
+	}
 	// Верхние звенья держат соединения через нижние — закрываем от выхода ко входу.
 	sort.Slice(clones, func(i, j int) bool { return clones[i].position > clones[j].position })
 	var err error
@@ -430,7 +457,7 @@ func (c *Chain) NewPacketConnection(ctx context.Context, conn N.PacketConn, meta
 	c.connection.NewPacketConnection(ctx, c, conn, metadata, onClose)
 }
 
-// resolvedLeaf — узел, который позиция выберет сейчас (через Now() групп), или
+// resolvedLeaf — узел, который позиция выберет сейчас (через Selected(TCP) групп), или
 // nil, если группа без выбора.
 func (c *Chain) resolvedLeaf(position int) adapter.Outbound {
 	seen := make(map[string]bool)
@@ -440,7 +467,11 @@ func (c *Chain) resolvedLeaf(position int) adapter.Outbound {
 		if !isGroup {
 			return target
 		}
-		now := group.Now()
+		selected := group.Selected(N.NetworkTCP)
+		if selected == nil {
+			return nil
+		}
+		now := selected.Tag()
 		if now == "" || seen[now] {
 			return nil
 		}

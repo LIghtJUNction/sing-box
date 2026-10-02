@@ -51,7 +51,7 @@ func TestHTTPSQueryDeadlineDoesNotCancelConcurrentQuery(t *testing.T) {
 	defer server.Close()
 	destination, _ := url.Parse(server.URL)
 	transport := NewHTTPSRaw(dns.TransportAdapter{}, log.NewNOPFactory().Logger(), testHTTPDialer{}, destination, http.Header{}, M.ParseSocksaddr(destination.Host), nil)
-	defer transport.Close()
+	defer transport.Reset()
 	query := new(mDNS.Msg)
 	query.SetQuestion("example.test.", mDNS.TypeA)
 	longCtx, longCancel := context.WithTimeout(context.Background(), 3*time.Second)

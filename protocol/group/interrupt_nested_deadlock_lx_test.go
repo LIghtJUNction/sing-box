@@ -1,18 +1,7 @@
-// lx: SPEC 084 — issue #20: переключение вложенного selector'а глушит весь
-// трафик. Сценарий репортёра на настоящих Selector'ах и настоящем
-// route.ConnectionManager:
-//
-//	global-auto-out (A) → eu-auto-out (B) → узел;  dns detour = global-auto-out.
-//
-// Входящее из TUN проходит outer.NewConnection → inner.NewConnection и обёрнуто
-// A, затем B (Close идёт B→A). DoH-соединение поднято через outer.DialContext и
-// обёрнуто B, затем A (Close идёт A→B). Переключение inner (Clash API) зовёт
-// Interrupt(B), HTTP/2-клиент в это же время закрывает DoH — до SPEC 084 это
-// был ABBA-дедлок, после которого каждое новое соединение вставало в
-// NewConn/NewSingPacketConn на том же замке.
-//
-// Детерминированность — «затвором»: первое соединение группы B блокирует свой
-// Close до сигнала, чтобы обе стороны гарантированно встретились.
+// Regression for nested selector interruption (issue #20). Detour sockets
+// nest wrappers inner -> outer; a previously wrapped inbound nests outer ->
+// inner. Interrupt and concurrent detour Close must never hold two group locks
+// in opposite order. Routing still uses the actual upstream group-chain path.
 
 package group
 
@@ -48,6 +37,19 @@ func (c *gatedPipeConn) Close() error {
 	return c.Conn.Close()
 }
 
+// closeSignalConn exposes actual socket disposal, after the manager callback.
+type closeSignalConn struct {
+	net.Conn
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (c *closeSignalConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(func() { close(c.closed) })
+	return err
+}
+
 // newNestedSelectorsUnderTest поднимает outer → inner → {node-a, node-b};
 // у обоих selector'ов interrupt_exist_connections=true, как в конфиге репортёра.
 func newNestedSelectorsUnderTest(t *testing.T) (outer, inner *Selector, nodeA, nodeB *probeNode) {
@@ -69,7 +71,6 @@ func newNestedSelectorsUnderTest(t *testing.T) (outer, inner *Selector, nodeA, n
 			Adapter:                      outbound.NewAdapter(C.TypeSelector, tag, nil, tags),
 			ctx:                          ctx,
 			outbound:                     mgr,
-			connection:                   service.FromContext[adapter.ConnectionManager](ctx),
 			logger:                       logger.NOP(),
 			tags:                         tags,
 			defaultTag:                   tags[0],
@@ -82,10 +83,10 @@ func newNestedSelectorsUnderTest(t *testing.T) (outer, inner *Selector, nodeA, n
 	mgr.byTag["eu-auto-out"] = inner
 	outer = newSelector("global-auto-out", []string{"eu-auto-out"})
 
-	if err := inner.Start(); err != nil {
+	if err := inner.Start(adapter.StartStateStart, newSelectorScope(t, ctx)); err != nil {
 		t.Fatalf("inner.Start: %v", err)
 	}
-	if err := outer.Start(); err != nil {
+	if err := outer.Start(adapter.StartStateStart, newSelectorScope(t, ctx)); err != nil {
 		t.Fatalf("outer.Start: %v", err)
 	}
 	return outer, inner, nodeA, nodeB
@@ -98,12 +99,17 @@ func TestLxNestedSelectorSwitchDuringDetourCloseNoDeadlock(t *testing.T) {
 	defer gateRemote.Close()
 	gate := &gatedPipeConn{Conn: gateLocal, entered: make(chan struct{}), release: make(chan struct{})}
 	upstreamRemote, upstreamLocal := net.Pipe()
+	defer upstreamRemote.Close()
+	defer upstreamLocal.Close()
 	dohRemote, dohLocal := net.Pipe()
+	defer dohRemote.Close()
+	defer dohLocal.Close()
 
 	// Узел отдаёт соединения в порядке дозвонов: затвор, сокет для входящего, DoH.
 	queue := make(chan net.Conn, 3)
 	queue <- gate
-	queue <- upstreamLocal
+	upstreamClosed := make(chan struct{})
+	queue <- &closeSignalConn{Conn: upstreamLocal, closed: upstreamClosed}
 	queue <- dohLocal
 	nodeA.makeConn = func() net.Conn { return <-queue }
 
@@ -112,14 +118,19 @@ func TestLxNestedSelectorSwitchDuringDetourCloseNoDeadlock(t *testing.T) {
 		t.Fatalf("inner.DialContext: %v", err)
 	}
 
-	// 2. Входящее из TUN: outer.NewConnection → inner.NewConnection → узел.
+	// 2. Route through the real Router. Retain the opposite wrapper nesting
+	// accepted by the older inbound path as a regression fixture: upstream now
+	// attaches raw closers rather than adding these wrappers itself.
 	inboundClient, inboundServer := net.Pipe()
 	defer inboundClient.Close()
+	defer inboundServer.Close()
 	metadata := adapter.InboundContext{
 		Network:     N.NetworkTCP,
 		Destination: M.ParseSocksaddr("example.com:80"),
 	}
-	go outer.NewConnection(context.Background(), inboundServer, metadata, func(it error) {})
+	wrappedInbound := inner.interruptGroup.NewConn(outer.interruptGroup.NewConn(inboundServer, true), true)
+	routeClosed := make(chan struct{})
+	go routeSelectorConnection(outer, wrappedInbound, metadata, func(it error) { close(routeClosed) })
 	deadline := time.Now().Add(2 * time.Second)
 	for nodeA.dialed.Load() < 2 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -160,6 +171,21 @@ func TestLxNestedSelectorSwitchDuringDetourCloseNoDeadlock(t *testing.T) {
 		}
 	}
 
+	// Router interrupts the inbound socket; ConnectionManager closes its peer
+	// asynchronously. Observe completion rather than assuming both close in
+	// SelectOutbound's goroutine.
+	select {
+	case <-routeClosed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("routed connection did not complete after interruption")
+	}
+
+	select {
+	case <-upstreamClosed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("upstream socket was not disposed after interruption")
+	}
+
 	if now := inner.Now(); now != "node-b" {
 		t.Errorf("inner.Now() = %q, ожидали node-b", now)
 	}
@@ -174,7 +200,10 @@ func TestLxNestedSelectorSwitchDuringDetourCloseNoDeadlock(t *testing.T) {
 	}
 
 	// 6. Новое соединение после переключения (уже через node-b) не встаёт на замке группы.
-	nodeB.makeConn = func() net.Conn { c, _ := net.Pipe(); return c }
+	nextLocal, nextRemote := net.Pipe()
+	defer nextLocal.Close()
+	defer nextRemote.Close()
+	nodeB.makeConn = func() net.Conn { return nextLocal }
 	newDone := make(chan error, 1)
 	go func() {
 		_, err := outer.DialContext(context.Background(), N.NetworkTCP, M.ParseSocksaddr("example.org:443"))

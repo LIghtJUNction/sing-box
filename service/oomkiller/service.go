@@ -49,6 +49,14 @@ func NewService(ctx context.Context, logger log.ContextLogger, tag string, optio
 	return s, nil
 }
 
+func MemoryPressure(ctx context.Context) func() tun.MemoryPressure {
+	oomKiller := service.FromContext[*Service](ctx)
+	if oomKiller == nil {
+		return nil
+	}
+	return oomKiller.MemoryPressure
+}
+
 func (s *Service) MemoryPressure() tun.MemoryPressure {
 	return tun.MemoryPressure(s.pressure.Load())
 }
@@ -67,10 +75,7 @@ func (s *Service) startTimer() error {
 }
 
 func (s *Service) stopTimer() {
-	var state timerState
-	if s.adaptiveTimer != nil {
-		state = s.adaptiveTimer.stop()
-	}
+	state := s.adaptiveTimer.stop()
 	s.pressure.Store(uint32(tun.MemoryPressureNone))
 	if s.recorder != nil {
 		s.recorder.instanceStopped(state)
