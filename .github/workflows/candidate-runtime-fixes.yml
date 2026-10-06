@@ -27,9 +27,18 @@ jobs:
           test -z "$(git ls-remote origin refs/heads/codex/upstream-runtime-fixes-20261007)"
           git checkout --detach c5a4f4dc186165f9cd8ae2ee19dd8a8863bed494
           python "$RUNNER_TEMP/fix-candidate-runtime.py"
-          git add transport/v2ray/transport.go protocol/vless/lx_encryption.go protocol/vless/lx_encryption_cancel_test.go protocol/group/urltest.go protocol/group/urltest_owner_cancel_test.go
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('transport/v2rayxhttp/short_exchange_test.go')
+          text=p.read_text()
+          old='\n\t"golang.org/x/net/http2"\n'
+          assert text.count(old)==1
+          p.write_text(text.replace(old,'\n'))
+          PY
+          gofmt -w transport/v2rayxhttp/short_exchange_test.go
+          git add transport/v2ray/transport.go protocol/vless/lx_encryption.go protocol/vless/lx_encryption_cancel_test.go protocol/group/urltest.go protocol/group/urltest_owner_cancel_test.go transport/v2rayxhttp/short_exchange_test.go
           git diff --cached --check
-          test "$(git write-tree)" = 813049c2b04faa84d9960ce844e751f891bc2b89
+          test "$(git write-tree)" = af8c4111bb256a31fdaeee68b55636272ac5f417
           git write-tree > "$RUNNER_TEMP/runtime-evidence/tree.txt"
           go version > "$RUNNER_TEMP/runtime-evidence/go-version.txt"
           set +e
