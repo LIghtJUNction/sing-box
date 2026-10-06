@@ -121,6 +121,17 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 	} else {
 		remoteConn, err = this.DialContext(ctx, N.NetworkTCP, metadata.Destination)
 	}
+	if err != nil && !metadata.Destination.IsIP() &&
+		metadata.RouteOriginalDestination.IsValid() && metadata.RouteOriginalDestination != metadata.Destination {
+		// MagicNet: the sniffed domain could not be used, for example because the
+		// upstream cannot resolve it. Retry once with the original destination so
+		// the connection still works the way it did before the domain override.
+		var fallbackErr error
+		remoteConn, fallbackErr = this.DialContext(ctx, N.NetworkTCP, metadata.RouteOriginalDestination)
+		if fallbackErr == nil {
+			err = nil
+		}
+	}
 	if err != nil {
 		var remoteString string
 		if len(metadata.DestinationAddresses) > 0 {
