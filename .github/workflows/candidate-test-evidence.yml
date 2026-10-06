@@ -1,0 +1,38 @@
+name: Candidate test evidence
+on:
+  push:
+    branches: [codex/upstream-preflight-20261007]
+    paths: [.github/workflows/candidate-test-evidence.yml]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: fd34958b2daf9b6a8898414a2ed29ccc6ffd58fe
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '~1.26'
+      - name: Execute unchanged default package tests
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/test-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/test-evidence/commit.txt"
+          go version > "$RUNNER_TEMP/test-evidence/go-version.txt"
+          go test -v -exec sudo -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -ldflags "$(cat release/LDFLAGS)" ./... > "$RUNNER_TEMP/test-evidence/tests.log" 2>&1
+          result=$?
+          echo "$result" > "$RUNNER_TEMP/test-evidence/exit-code.txt"
+          tail -100 "$RUNNER_TEMP/test-evidence/tests.log"
+          exit "$result"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: candidate-test-evidence
+          path: ${{ runner.temp }}/test-evidence/*
+          retention-days: 3
+          if-no-files-found: error
