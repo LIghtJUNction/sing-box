@@ -282,10 +282,7 @@ func (c *Chain) createClone(position int, leaf adapter.Outbound) (*clone, error)
 // без выбора дольше idle_timeout. Переключение группы само по себе звено не
 // удаляет: без interrupt_exist_connections старые потоки доживают через него.
 func (c *Chain) evictLoop() {
-	period := c.idleTimeout / 4
-	if period < minEvictTick {
-		period = minEvictTick
-	}
+	period := max(c.idleTimeout/4, minEvictTick)
 	ticker := time.NewTicker(period)
 	defer ticker.Stop()
 	for {

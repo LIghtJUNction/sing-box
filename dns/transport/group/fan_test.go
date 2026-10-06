@@ -385,11 +385,9 @@ func TestElectionConcurrentDoesNotTrashCurrent(t *testing.T) {
 	const burst = 6
 	var wg sync.WaitGroup
 	for i := 0; i < burst; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, _ = group.Exchange(context.Background(), testQuery())
-		}()
+		})
 	}
 	time.Sleep(30 * time.Millisecond)
 	// While the election is gated, concurrents serve via random clean

@@ -676,10 +676,6 @@ func (o *Outbound) rememberNetwork(network string) {
 
 // lx:end masque-auto
 
-func (o *Outbound) connectH3(ctx context.Context) (io.Closer, masque.IpConn, error) {
-	return o.connectH3WithBudget(ctx, 0)
-}
-
 // connectH3WithBudget dials h3, optionally capping the QUIC handshake.
 //
 // lx: SPEC 074 — the budget starts once the UDP socket is up, deliberately: the

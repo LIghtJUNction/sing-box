@@ -77,8 +77,8 @@ func TestConnectDialBounded(t *testing.T) {
 	reacquired := make(chan struct{})
 	go func() {
 		bind.connAccess.Lock()
-		bind.connAccess.Unlock()
 		close(reacquired)
+		bind.connAccess.Unlock()
 	}()
 	select {
 	case <-reacquired:

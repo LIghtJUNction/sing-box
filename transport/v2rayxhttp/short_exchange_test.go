@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 // Regression guard for LxBox issue #100 (lx: SPEC 077): a strict DNS-over-TCP
@@ -56,7 +55,7 @@ func answeringServer(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	server := &http.Server{Handler: h2c.NewHandler(handler, &http2.Server{})}
+	server := newH2CTestServer(handler)
 	go server.Serve(listener)
 	t.Cleanup(func() { server.Close() })
 	return listener.Addr().String()

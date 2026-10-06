@@ -102,9 +102,9 @@ var (
 
 func mustHexBytes(s string) []byte {
 	b := make([]byte, len(s)/2)
-	for i := 0; i < len(b); i++ {
+	for i := range b {
 		var v byte
-		for j := 0; j < 2; j++ {
+		for j := range 2 {
 			c := s[i*2+j]
 			switch {
 			case c >= '0' && c <= '9':
