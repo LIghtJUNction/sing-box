@@ -1,0 +1,40 @@
+name: Prepare pinned upstream candidate
+on:
+  push:
+    branches: [codex/upstream-preflight-20261007]
+    paths: [.github/workflows/reconcile-upstream.yml]
+permissions:
+  contents: write
+concurrency:
+  group: prepare-pinned-upstream-20261007
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          fetch-depth: 0
+      - name: Reproduce reviewed merge on a new branch only
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .github/maintenance/reconcile-upstream.py "$RUNNER_TEMP/reconcile-upstream.py"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          test "$(git ls-remote origin refs/heads/testing | cut -f1)" = b7eb313f92587b92c417ef02a6c3a80b6aaf738a
+          test -z "$(git ls-remote origin refs/heads/codex/sync-upstream-20261007)"
+          git remote add upstream https://github.com/SagerNet/sing-box.git
+          git fetch --no-tags upstream a4331b8d745971fdc1be33bba5513ab16105e2d3
+          git checkout --detach b7eb313f92587b92c417ef02a6c3a80b6aaf738a
+          set +e
+          git merge --no-commit --no-ff a4331b8d745971fdc1be33bba5513ab16105e2d3
+          merge_rc=$?
+          set -e
+          test "$merge_rc" = 1
+          python "$RUNNER_TEMP/reconcile-upstream.py"
+          git diff --cached --stat
+          git commit -m 'Merge upstream testing a4331b8d; retain Android and WireGuard fork contracts'
+          git push origin HEAD:refs/heads/codex/sync-upstream-20261007
+          git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
