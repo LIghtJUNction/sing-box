@@ -22,6 +22,7 @@ type Device interface {
 	SetDevice(device *device.Device, peers []*device.Peer)
 	Inet4Address() netip.Addr
 	Inet6Address() netip.Addr
+	UpstreamPort() any
 }
 
 type DeviceOptions struct {
