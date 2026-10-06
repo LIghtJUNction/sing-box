@@ -40,7 +40,7 @@ func (t *Transport) fan(ctx context.Context, message *mDNS.Msg, participants []*
 	results := make(chan fanResult, len(participants))
 	for _, participant := range participants {
 		go func(current *member) {
-			response, err, rtt := t.timedExchange(ctx, current, message.Copy())
+			response, rtt, err := t.timedExchange(ctx, current, message.Copy())
 			results <- fanResult{member: current, response: response, err: err, rtt: rtt}
 		}(participant)
 	}

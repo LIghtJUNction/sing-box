@@ -1,8 +1,9 @@
 package trafficcontrol
 
 import (
-	"github.com/sagernet/sing-box/adapter"
 	"testing"
+
+	"github.com/sagernet/sing-box/adapter"
 )
 
 type legacyTraceGroup struct{}
@@ -15,7 +16,7 @@ type traceNode struct {
 func (n *traceNode) Tag() string                          { return n.tag }
 func (legacyTraceGroup) Selected(string) adapter.Outbound { return &traceNode{tag: "manual-node"} }
 
-type splitTraceGroup struct{ legacyTraceGroup }
+type splitTraceGroup struct{}
 
 func (splitTraceGroup) Selected(network string) adapter.Outbound {
 	switch network {

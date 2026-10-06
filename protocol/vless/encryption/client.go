@@ -21,6 +21,7 @@ import (
 	"time"
 
 	E "github.com/sagernet/sing/common/exceptions"
+
 	"lukechampine.com/blake3"
 )
 

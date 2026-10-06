@@ -87,7 +87,7 @@ func TestEndpointScopeCloseJoinsBoundedParallelCleanup(t *testing.T) {
 	}
 	closed := make(chan error, 1)
 	go func() { closed <- scope.Close() }()
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		select {
 		case <-entered:
 		case <-time.After(time.Second):
