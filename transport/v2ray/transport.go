@@ -52,5 +52,9 @@ func NewClientTransport(ctx context.Context, dialer N.Dialer, serverAddr M.Socks
 	if !loaded {
 		return nil, E.New("unknown transport type: " + options.Type)
 	}
-	return constructor(ctx, dialer, serverAddr, options, tlsConfig)
+	client, err := constructor(ctx, dialer, serverAddr, options, tlsConfig)
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
 }

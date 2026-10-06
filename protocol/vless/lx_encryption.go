@@ -44,7 +44,23 @@ func (h *vlessDialer) wrapEncryption(ctx context.Context, conn net.Conn) (net.Co
 			defer conn.SetWriteDeadline(time.Time{})
 		}
 	}
+	// Deadlines alone do not observe an earlier cancellation. Close the raw
+	// stream while the handshake is in flight, but disarm before returning a
+	// successful connection so later dial-context expiry cannot kill it.
+	if err := ctx.Err(); err != nil {
+		common.Close(conn)
+		return nil, E.Cause(err, "encryption handshake")
+	}
+	cancelled := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		common.Close(conn)
+		close(cancelled)
+	})
 	encryptedConn, err := h.encryption.Handshake(conn)
+	if !stop() {
+		<-cancelled
+		return nil, E.Cause(ctx.Err(), "encryption handshake")
+	}
 	if err != nil {
 		common.Close(conn)
 		return nil, E.Cause(err, "encryption handshake")
