@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"testing"
 	"time"
-
-	"golang.org/x/net/http2"
 )
 
 // Regression guard for LxBox issue #100 (lx: SPEC 077): a strict DNS-over-TCP

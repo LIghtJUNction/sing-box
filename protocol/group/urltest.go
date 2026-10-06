@@ -612,6 +612,15 @@ func (g *URLTestGroup) URLTest(ctx context.Context) (map[string]uint16, error) {
 }
 
 func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint16, error) {
+	// Manual/API callers may use a process-wide context. Every run also belongs
+	// to this group and must end when Close cancels the group's lifetime.
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(g.ctx, cancel)
+	defer stop()
+	defer cancel()
+	if g.ctx.Err() != nil {
+		cancel()
+	}
 	if g.checking.Swap(true) {
 		return make(map[string]uint16), nil
 	}
