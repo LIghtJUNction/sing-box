@@ -89,9 +89,10 @@ type Transport struct {
 	access   sync.Mutex
 	members  []*member
 	records  map[string]*memberRecord
-	current  string // sticky target (stable/fastest); "" = not chosen yet
-	election bool   // fastest: an election fan is in flight (single-flight)
-	gen      int    // bumped by Reset; a finishing fan from an older gen drops state writes
+	current  string    // sticky target (stable/fastest); "" = not chosen yet
+	election bool      // fastest: an election fan is in flight (single-flight)
+	gen      int       // bumped by Reset; a finishing fan from an older gen drops state writes
+	lastErr  time.Time // strictly orders failures even on coarse-resolution clocks
 }
 
 func NewTransport(ctx context.Context, logger log.ContextLogger, tag string, options option.GroupDNSServerOptions) (adapter.DNSTransport, error) {
@@ -176,6 +177,7 @@ func (t *Transport) Reset() {
 	defer t.access.Unlock()
 	t.records = make(map[string]*memberRecord)
 	t.current = ""
+	t.lastErr = time.Time{}
 	t.gen++
 	// `election` is left as-is: an in-flight fan still owns the flag and
 	// clears it on completion; its state writes are dropped by the gen check.
@@ -240,7 +242,12 @@ func (t *Transport) noteError(tag string, gen int) {
 		return
 	}
 	record := t.recordLocked(tag)
-	record.errors = appendCapped(record.errors, time.Now())
+	now := time.Now()
+	if !now.After(t.lastErr) {
+		now = t.lastErr.Add(time.Nanosecond)
+	}
+	t.lastErr = now
+	record.errors = appendCapped(record.errors, now)
 	record.wins = nil
 }
 

@@ -380,10 +380,7 @@ func (c *Conn) WritePacket(b []byte) (icmp []byte, err error) {
 	// lx: SPEC 021 A3.
 	var origHead []byte
 	if len(b) > 0 {
-		snapLen := len(b)
-		if snapLen > minMTU {
-			snapLen = minMTU
-		}
+		snapLen := min(len(b), minMTU)
 		origHead = append(origHead, b[:snapLen]...)
 	}
 

@@ -187,9 +187,7 @@ func (r *Router) startIdleSuspend() error {
 	}
 	r.idleStop = make(chan struct{})
 	period := r.idleSuspend / idleTickDivisor
-	if period < idleTickFloor {
-		period = idleTickFloor
-	}
+	period = max(period, idleTickFloor)
 	ticker := time.NewTicker(period)
 	if r.pauseManager != nil {
 		r.idlePauseCallback = pause.RegisterTicker(r.pauseManager, ticker, period, nil)

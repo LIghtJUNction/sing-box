@@ -75,7 +75,7 @@ func (t *Transport) collectFan(ctx context.Context, count int, results chan fanR
 		errs      []error
 		delivered bool
 	)
-	for i := 0; i < count; i++ {
+	for range count {
 		result := <-results
 		if isFailure(result.response, result.err) {
 			// Guard: a failure observed after the request context ended (the

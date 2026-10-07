@@ -176,7 +176,7 @@ func TestStreamDialHalfAliveNodeFailsWithinDeadline(t *testing.T) {
 func TestStreamDialSlotReleasedOnceOnRaiseFailure(t *testing.T) {
 	t.Parallel()
 	client := stubClient(t, modeStreamOne, errorRoundTripper{err: errors.New("pooled connection is dead")})
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		expectDialFailure(t, dialUnderTest(context.Background(), client), "")
 	}
 	if got := openUsageOf(client); got != 0 {

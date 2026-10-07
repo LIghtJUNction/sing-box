@@ -32,7 +32,7 @@ func ContextWithoutChainHop(ctx context.Context) context.Context {
 	if ctx.Value(chainHopKey{}) == nil {
 		return ctx
 	}
-	return context.WithValue(ctx, chainHopKey{}, (ChainLeafResolver)(nil))
+	return context.WithValue(ctx, chainHopKey{}, ChainLeafResolver(nil))
 }
 
 // ResolveChainLeaf — хук в точках, где группа дозванивается до выбранного
