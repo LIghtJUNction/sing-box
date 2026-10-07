@@ -18,7 +18,7 @@ func TestConnectionsConcurrentAccess(t *testing.T) {
 
 	// Writer: mirrors a CommandConnections subscriber goroutine applying a stream of events.
 	wg.Go(func() {
-		for i := 0; i < rounds; i++ {
+		for i := range rounds {
 			id := strconv.Itoa(i % 64) // churn a bounded id set so the map both grows and updates
 			connections.ApplyEvents(&ConnectionEvents{
 				events: []*ConnectionEvent{{
@@ -31,9 +31,9 @@ func TestConnectionsConcurrentAccess(t *testing.T) {
 	})
 
 	// Readers: the UI side — iterate, filter, and sort concurrently with the writer.
-	for r := 0; r < 3; r++ {
+	for range 3 {
 		wg.Go(func() {
-			for i := 0; i < rounds; i++ {
+			for range rounds {
 				it := connections.Iterator()
 				for it.HasNext() {
 					_ = it.Next()

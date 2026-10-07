@@ -21,7 +21,7 @@ func TestOnPauseUpdatedNeverBlocks(t *testing.T) {
 	e := &Endpoint{}
 	e.pauseOpAccess.Lock()
 	start := time.Now()
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		e.onPauseUpdated(pause.EventDevicePaused)
 	}
 	elapsed := time.Since(start)

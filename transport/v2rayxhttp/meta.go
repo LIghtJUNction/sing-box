@@ -249,7 +249,7 @@ func sessionIDSpaceSufficient(size, length int) bool {
 		return false
 	}
 	space := int64(1)
-	for i := 0; i < length; i++ {
+	for range length {
 		space *= int64(size)
 		if space >= minSessionIDSpace {
 			return true

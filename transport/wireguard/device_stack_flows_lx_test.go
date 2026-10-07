@@ -3,13 +3,13 @@ package wireguard
 import (
 	"context"
 	"net"
+	"sync"
+	"sync/atomic"
+	"testing"
 
 	"github.com/sagernet/sing-tun"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"sync"
-	"sync/atomic"
-	"testing"
 )
 
 func TestTrackedTCPConnectionReleasesExactlyOnce(t *testing.T) {
@@ -22,12 +22,10 @@ func TestTrackedTCPConnectionReleasesExactlyOnce(t *testing.T) {
 	}
 	var done sync.WaitGroup
 	for range 8 {
-		done.Add(1)
-		go func() {
-			defer done.Done()
+		done.Go(func() {
 			_ = conn.Close()
 			conn.release() // routed onClose can race with the actual Close
-		}()
+		})
 	}
 	done.Wait()
 	if active.Load() != 0 {

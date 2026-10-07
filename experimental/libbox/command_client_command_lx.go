@@ -94,7 +94,6 @@ type DnsAnswerIterator interface {
 // reconnect), not a DNS-specific OnError. includeAnswers comes from options, like
 // StatusInterval. Dispatched from dispatchCommands on CommandDNS.
 func (c *CommandClient) handleDNSStream(client daemon.StartedServiceClient, ctx context.Context) {
-
 	stream, err := client.SubscribeDNSQueries(ctx, &daemon.SubscribeDNSQueriesRequest{
 		IncludeAnswers: c.options.DNSIncludeAnswers,
 	})

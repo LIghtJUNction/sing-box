@@ -87,7 +87,7 @@ func TestStreamOneShortExchangesAfterDialCancel(t *testing.T) {
 	t.Run("dial-per-query", func(t *testing.T) {
 		t.Parallel()
 		client := liveH2CClient(t, answeringServer(t), modeStreamOne)
-		for i := 0; i < shortExchanges; i++ {
+		for i := range shortExchanges {
 			ctx, cancel := context.WithCancelCause(context.Background())
 			conn, err := client.DialContext(ctx)
 			cancel(nil)
@@ -108,7 +108,7 @@ func TestStreamOneShortExchangesAfterDialCancel(t *testing.T) {
 			t.Fatalf("dial: %v", err)
 		}
 		defer conn.Close()
-		for i := 0; i < shortExchanges; i++ {
+		for i := range shortExchanges {
 			exchangeOnce(t, conn, uint16(i))
 		}
 	})

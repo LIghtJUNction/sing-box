@@ -31,7 +31,7 @@ func TestFastestColdStartElection(t *testing.T) {
 	// Between elections: single exchanges to the winner only.
 	waitFanSettled(t, group)
 	slowCalls := slow.calls.Load()
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err = group.Exchange(context.Background(), testQuery())
 		require.NoError(t, err)
 	}
@@ -85,12 +85,10 @@ func TestFastestElectionSingleFlight(t *testing.T) {
 	const burst = 5
 	var wg sync.WaitGroup
 	errs := make([]error, burst)
-	for i := 0; i < burst; i++ {
-		wg.Add(1)
-		go func(slot int) {
-			defer wg.Done()
+	for slot := range burst {
+		wg.Go(func() {
 			_, errs[slot] = group.Exchange(context.Background(), testQuery())
-		}(i)
+		})
 	}
 	time.Sleep(30 * time.Millisecond) // whole burst in flight, all gated
 	close(release)
@@ -160,7 +158,7 @@ func TestParallelFansEveryQueryNoWins(t *testing.T) {
 	second := delayed("b", 10*time.Millisecond)
 	group := newTestGroup(t, ModeParallel, time.Hour, 0, first, second)
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := group.Exchange(context.Background(), testQuery())
 		require.NoError(t, err)
 		time.Sleep(20 * time.Millisecond) // let stragglers finish
@@ -384,7 +382,7 @@ func TestElectionConcurrentDoesNotTrashCurrent(t *testing.T) {
 
 	const burst = 6
 	var wg sync.WaitGroup
-	for i := 0; i < burst; i++ {
+	for range burst {
 		wg.Go(func() {
 			_, _ = group.Exchange(context.Background(), testQuery())
 		})
