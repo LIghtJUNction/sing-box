@@ -58,6 +58,9 @@ func PeekStream(ctx context.Context, metadata *adapter.InboundContext, conn net.
 			return E.Cause(err, "read payload")
 		}
 		sniffError = nil
+		// lx:begin sniff-error-aggregation
+		var sniffErrors []error
+		// lx:end sniff-error-aggregation
 		var singleReader bytes.Reader
 		for _, sniffer := range sniffers {
 			var reader io.Reader
@@ -73,8 +76,17 @@ func PeekStream(ctx context.Context, metadata *adapter.InboundContext, conn net.
 			if err == nil {
 				return nil
 			}
-			sniffError = E.Errors(sniffError, err)
+			// lx:begin sniff-error-aggregation
+			if sniffErrors == nil {
+				sniffErrors = make([]error, 0, len(sniffers))
+			}
+			sniffErrors = append(sniffErrors, err)
+			// lx:end sniff-error-aggregation
 		}
+		// lx:begin sniff-error-aggregation
+		// Flatten and deduplicate once, after every probe rejected the payload.
+		sniffError = E.Errors(sniffErrors...)
+		// lx:end sniff-error-aggregation
 		if !errors.Is(sniffError, ErrNeedMoreData) {
 			break
 		}
