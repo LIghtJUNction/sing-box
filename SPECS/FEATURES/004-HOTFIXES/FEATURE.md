@@ -165,6 +165,7 @@
 
 | Задача | Симптом | Где патч | Условие снятия | Статус |
 |---|---|---|---|---|
+| [086](../../TASKS/086-SOCKET_DIAG_REQUEST_STACK/SPEC.md) | Временная heap-аллокация запроса для каждого Linux/Android owner-query | `common/process/socket_diag_linux.go`, возврат фиксированного массива по значению | Query-реализация upstream/форка перестанет аллоцировать request; сохранять byte-level и live lookup проверки | держим |
 | [010](../../TASKS/010-WG_ENDPOINT_GRO_SPLIT_BRAIN/SPEC.md) | WG-endpoint без `detour` режет download на Android (0.44 Mbps) | submodule `conn/` | ✅ **выполнено** — upstream `24ea133` | **СНЯТ** |
 | [028](../../TASKS/028-NESTED_TUNNEL_UDP_FRAGMENT/SPEC.md) | Вложенные туннели через `detour` не ходят | `protocol/masque/outbound.go`, endpoint | Апстрим сам выставит `UDPFragmentDefault` для туннельных outbound'ов | держим |
 | [029](../../TASKS/029-ENDPOINT_DETOUR_START_ORDER/SPEC.md) | Endpoint с `detour` мёртв, если провайдер объявлен позже | `protocol/wireguard/endpoint.go` | ✅ причина устранена — upstream `f39ab0e9` (lx.15). Остаток: апстрим сам введёт ранний резолв detour с fail-fast | **частично снят** — держим только fail-fast |
