@@ -89,7 +89,9 @@ func (c *socketDiagConn) query(source netip.AddrPort, destination netip.AddrPort
 		if err != nil {
 			return 0, 0, E.Cause(err, "dial netlink")
 		}
-		inode, uid, err = querySocketDiag(c.fd, request)
+		// lx:begin socket-diag-stack-request
+		inode, uid, err = querySocketDiag(c.fd, request[:])
+		// lx:end socket-diag-stack-request
 		if err == nil || errors.Is(err, ErrNotFound) {
 			return inode, uid, err
 		}
@@ -144,8 +146,10 @@ func (c *socketDiagConn) closeLocked() error {
 	return err
 }
 
-func packSocketDiagRequest(family, protocol byte, source netip.AddrPort, destination netip.AddrPort, dump bool) []byte {
-	request := make([]byte, sizeOfSocketDiagRequest)
+// lx:begin socket-diag-stack-request
+func packSocketDiagRequest(family, protocol byte, source netip.AddrPort, destination netip.AddrPort, dump bool) [sizeOfSocketDiagRequest]byte {
+	var request [sizeOfSocketDiagRequest]byte
+	// lx:end socket-diag-stack-request
 
 	binary.NativeEndian.PutUint32(request[0:4], sizeOfSocketDiagRequest)
 	binary.NativeEndian.PutUint16(request[4:6], socketDiagByFamily)
@@ -243,7 +247,10 @@ func dumpSocketDiagFamily(family, protocol uint8, source netip.AddrPort, destina
 		return 0, 0, E.Cause(err, "dial netlink")
 	}
 	defer syscall.Close(fd)
-	_, err = writeSocketDiag(fd, packSocketDiagRequest(family, protocol, source, netip.AddrPort{}, true))
+	// lx:begin socket-diag-stack-request
+	request := packSocketDiagRequest(family, protocol, source, netip.AddrPort{}, true)
+	_, err = writeSocketDiag(fd, request[:])
+	// lx:end socket-diag-stack-request
 	if err != nil {
 		return 0, 0, E.Cause(err, "write netlink request")
 	}
