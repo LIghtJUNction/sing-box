@@ -52,6 +52,7 @@ endpoint'ы ядро не сниффит никогда — их сокеты у
 |---|--------|--------|
 | [078](../../TASKS/078-WIREGUARD_PACKET_SNIFFER/SPEC.md) | Сниффер `wireguard` перед uTP; имя в `sniffer`/`protocol` | I |
 | [079](../../TASKS/079-VPN_VOIP_PACKET_SNIFFERS/SPEC.md) | `openvpn` (UDP+TCP), `ike` (IKEv2/IKEv1, 500/4500), `tailscale` (disco), `sip` (UDP+TCP, Domain из Request-URI); общая дока `docs-lx/lx-sniff.md` | I |
+| [085](../../TASKS/085-STREAM_SNIFF_ERROR_AGGREGATION/SPEC.md) | Сбор ошибок отклонённых stream-проб без повторного разворачивания; порядок, deduplication и повторное чтение сохраняются | C |
 
 ## Что распознаём
 
