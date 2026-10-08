@@ -15,6 +15,7 @@
   "tolerance": 0,
   "idle_timeout": "",
   "interrupt_exist_connections": false,
+  "lazy_start": false,
 
   "mode": "least_test",
   "balancer": {
@@ -148,3 +149,20 @@ slot keeps all its keys when other slots change — no needless reconnects, no p
     For a large node list, `mode: round_robin` with `pool_tolerance: 0` and a small `pool`
     (e.g. 3) is the recommended setup: a handful of live nodes in rotation, minimal testing.
     A longer `interval` (e.g. `15m`) further reduces background testing.
+
+#### lazy_start
+
+!!! quote "sing-box-lx"
+
+    An opt-in `lx` extension; defaults to `false`.
+
+With `true`, the group's own startup and network-change tests are deferred until
+it carries traffic. The first connection or attachment schedules a test immediately,
+while traffic uses the existing cold fallback/pool. Network changes retest groups
+with an active ticker; after `idle_timeout`, the next traffic starts testing again.
+State queries do not activate testing. Automatic tests respect device/network pause;
+a pending first test resumes on the next effective traffic touch after waking.
+
+Manual URL tests remain forced and do not activate the background ticker. An active
+parent URLtest group may still test an unused nested group as a dependency.
+This reduces background probes; actual node latency and battery savings are not guaranteed.
