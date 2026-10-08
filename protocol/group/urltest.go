@@ -50,6 +50,9 @@ type URLTest struct {
 	interruptExternalConnections bool
 	balancer                     *balancer // lx: SPEC 019 — nil for least_test (default)
 	passiveCheck                 bool      // lx: SPEC 019 — skip probes for passively-confirmed nodes
+	// lx:begin urltest-lazy-start
+	lazyStart bool // SPEC 019 — start automatic probes on first traffic
+	// lx:end urltest-lazy-start
 }
 
 func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.URLTestOutboundOptions) (adapter.Outbound, error) {
@@ -82,6 +85,9 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 		interruptExternalConnections: options.InterruptExistConnections,
 		balancer:                     balancer,
 		passiveCheck:                 options.PassiveCheck,
+		// lx:begin urltest-lazy-start
+		lazyStart: options.LazyStart,
+		// lx:end urltest-lazy-start
 	}
 	if len(outbound.tags) == 0 {
 		return nil, E.New("missing tags")
@@ -107,6 +113,9 @@ func (s *URLTest) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		group.balancer = s.balancer
 		group.groupTag = s.Tag()
 		group.passiveCheck = s.passiveCheck
+		// lx:begin urltest-lazy-start
+		group.lazyStart = s.lazyStart
+		// lx:end urltest-lazy-start
 		if s.balancer != nil {
 			s.balancer.onChange = func() { invalidateReachability(s.ctx) }
 		}
@@ -258,12 +267,26 @@ func (s *URLTest) InterfaceUpdated(ctx context.Context) {
 	if group.pause.IsDevicePaused() || group.pause.IsNetworkPaused() {
 		return
 	}
+	// lx:begin urltest-lazy-start
+	// SPEC 019 — an unused lazy group has no automatic work to reset.
+	if group.lazyStart && !group.lazyActive() {
+		return
+	}
+	// lx:end urltest-lazy-start
 	go func() {
 		s.checkAccess.Lock()
 		defer s.checkAccess.Unlock()
 		if ctx.Err() != nil {
 			return
 		}
+		// lx:begin urltest-lazy-start
+		// SPEC 019 — recheck after waiting: the group may have gone idle,
+		// paused or closed, and tie this reset to the group's shutdown too.
+		if group.lazyStart {
+			group.checkLazyInterface(ctx)
+			return
+		}
+		// lx:end urltest-lazy-start
 		group.CheckOutbounds(ctx, true)
 	}()
 }
@@ -392,6 +415,12 @@ type URLTestGroup struct {
 	// health-check skip probing that node.
 	passiveCheck bool
 	passiveOK    sync.Map
+	// lx:begin urltest-lazy-start
+	// SPEC 019 — immutable option and access-protected first-test state.
+	lazyStart            bool
+	lazyInitialCheck     bool
+	lazyInitialScheduled bool
+	// lx:end urltest-lazy-start
 	// lx: SPEC 054 — penalty failover (least_test): tag → счётчик отказов «путь
 	// мёртв»; сброс только доказательством жизни (успешный дайл / ответ на пробу).
 	// forcedRetestRunning + lastForcedRetest — уровень-триггер аварийного
@@ -450,10 +479,22 @@ func (g *URLTestGroup) PostStart() {
 	// lx: SPEC 019 v2 — seed the pool so round_robin can route from the first connection,
 	// before the first health-check completes (history-warm nodes first, else config order).
 	g.seedPool()
-	go g.CheckOutbounds(g.ctx, false)
+	// lx:begin urltest-lazy-start
+	// SPEC 019 — keep the cold fallback/pool, defer unused-group probes.
+	if !g.lazyStart {
+		go g.CheckOutbounds(g.ctx, false)
+	}
+	// lx:end urltest-lazy-start
 }
 
 func (g *URLTestGroup) Touch() {
+	// lx:begin urltest-lazy-start
+	// SPEC 019 — separate opt-in lifecycle; default keeps the upstream path.
+	if g.lazyStart {
+		g.touchLazy()
+		return
+	}
+	// lx:end urltest-lazy-start
 	g.access.Lock()
 	defer g.access.Unlock()
 	// lx: started is read/cleared under the lock (Close sets it false), so a dial
@@ -484,6 +525,15 @@ func (g *URLTestGroup) Close() error {
 	if g.ticker == nil {
 		return nil
 	}
+	// lx:begin urltest-lazy-start
+	// SPEC 019 — unregister before the final Stop so Wake cannot rearm
+	// a retired lazy ticker in the gap between Stop and callback removal.
+	if g.lazyStart {
+		g.stopLazyTickerLocked()
+		close(g.close)
+		return nil
+	}
+	// lx:end urltest-lazy-start
 	g.ticker.Stop()
 	g.ticker = nil
 	g.pause.UnregisterCallback(g.pauseCallback)
