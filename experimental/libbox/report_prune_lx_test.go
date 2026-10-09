@@ -47,7 +47,7 @@ func TestPruneReportsKeepsNewestByCount(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	base := time.Now().Add(-100 * time.Hour)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		writeReportDir(t, dir, "report-"+strconv.Itoa(i), 16, base.Add(time.Duration(i)*time.Hour))
 	}
 
@@ -72,7 +72,7 @@ func TestPruneReportsHonoursByteBudget(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	base := time.Now().Add(-10 * time.Hour)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		writeReportDir(t, dir, "report-"+strconv.Itoa(i), 1000, base.Add(time.Duration(i)*time.Hour))
 	}
 

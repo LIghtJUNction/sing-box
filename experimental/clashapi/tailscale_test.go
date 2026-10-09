@@ -53,6 +53,7 @@ func TestTailscaleLoginStatusIsPrivateAndCancelsSubscription(t *testing.T) {
 		t.Fatal("status watcher leaked")
 	}
 }
+
 func TestTailscaleLoginStatusRejectsMissingEndpoint(t *testing.T) {
 	handler := tailscaleRouter(&Server{endpoint: loginEndpoints{}, tailscaleSecret: "fixture-secret"})
 	response := httptest.NewRecorder()

@@ -15,7 +15,6 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 // This file pins the raise-failure contract (lx: SPEC 072): a dial whose HTTP
@@ -281,7 +280,7 @@ func echoServer(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	server := &http.Server{Handler: h2c.NewHandler(handler, &http2.Server{})}
+	server := newH2CTestServer(handler)
 	go server.Serve(listener)
 	t.Cleanup(func() { server.Close() })
 	return listener.Addr().String()

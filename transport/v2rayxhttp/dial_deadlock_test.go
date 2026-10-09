@@ -12,7 +12,6 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 // xrayLikeServer models the half of the XHTTP server contract that made
@@ -69,7 +68,7 @@ func newXrayLikeServer(t *testing.T) *xrayLikeServer {
 		t.Fatalf("listen: %v", err)
 	}
 	s.addr = listener.Addr().String()
-	s.server = &http.Server{Handler: h2c.NewHandler(handler, &http2.Server{})}
+	s.server = newH2CTestServer(handler)
 	go s.server.Serve(listener)
 	t.Cleanup(func() { s.server.Close() })
 	return s

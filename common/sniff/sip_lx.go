@@ -42,10 +42,7 @@ var sipMethods = map[string]bool{
 func sipMethodPrefix(b []byte) bool {
 	for m := range sipMethods {
 		ms := m + " "
-		n := len(b)
-		if n > len(ms) {
-			n = len(ms)
-		}
+		n := min(len(b), len(ms))
 		if string(b[:n]) == ms[:n] {
 			return true
 		}

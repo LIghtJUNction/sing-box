@@ -76,12 +76,12 @@ func TestReachCache_invalidateIsLockFree(t *testing.T) {
 	r.reachDirty.Store(true)
 	done := make(chan struct{})
 	go func() {
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			r.InvalidateReachability()
 		}
 		close(done)
 	}()
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		r.reachableOutbounds()
 	}
 	<-done

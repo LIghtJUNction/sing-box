@@ -40,6 +40,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"slices"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -301,12 +302,7 @@ func (g *URLTestGroup) penaltyTotal(network string) bool {
 }
 
 func supportsNetwork(detour adapter.Outbound, network string) bool {
-	for _, n := range detour.Network() {
-		if n == network {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(detour.Network(), network)
 }
 
 // lx:end SPEC 054

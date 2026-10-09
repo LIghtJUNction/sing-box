@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"net"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing/common"
@@ -26,7 +27,8 @@ import (
 // fragmented padding with sleeps in between. On a half-alive node those writes
 // block forever, which is how URL tests turned into goroutines that outlived the
 // box. The dial deadline is therefore applied to the conn for the duration of
-// the handshake and cleared afterwards, so the caller's context governs it.
+// the handshake and cleared afterwards. Cancellation without a deadline also
+// forces an immediate write deadline, so box shutdown governs the handshake.
 //
 // WRITE side only, deliberately. The hang this guards against is a blocked Write
 // into an upload body nobody reads, so a read deadline buys nothing here — and it
@@ -44,6 +46,21 @@ func (h *vlessDialer) wrapEncryption(ctx context.Context, conn net.Conn) (net.Co
 			defer conn.SetWriteDeadline(time.Time{})
 		}
 	}
+	var cancelFired atomic.Bool
+	cancelDone := make(chan struct{})
+	stopCancel := context.AfterFunc(ctx, func() {
+		defer close(cancelDone)
+		cancelFired.Store(true)
+		_ = conn.SetWriteDeadline(time.Now())
+	})
+	defer func() {
+		if !stopCancel() {
+			<-cancelDone
+			if cancelFired.Load() {
+				_ = conn.SetWriteDeadline(time.Time{})
+			}
+		}
+	}()
 	encryptedConn, err := h.encryption.Handshake(conn)
 	if err != nil {
 		common.Close(conn)

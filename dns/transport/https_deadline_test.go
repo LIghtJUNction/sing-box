@@ -11,11 +11,12 @@ import (
 	"testing"
 	"time"
 
-	mDNS "github.com/miekg/dns"
 	"github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/log"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+
+	mDNS "github.com/miekg/dns"
 )
 
 type testHTTPDialer struct{ N.Dialer }

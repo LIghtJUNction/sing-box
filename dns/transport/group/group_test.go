@@ -138,7 +138,7 @@ func TestStableStickyOnHealthyNetwork(t *testing.T) {
 	second := answering("b")
 	group := newTestGroup(t, ModeStable, time.Hour, 0, first, second)
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		_, err := group.Exchange(context.Background(), testQuery())
 		require.NoError(t, err)
 	}
@@ -182,7 +182,7 @@ func TestStableRescueFanReelects(t *testing.T) {
 
 	// Subsequent queries go to b only (a is dirty).
 	aCalls := first.calls.Load()
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err = group.Exchange(context.Background(), testQuery())
 		require.NoError(t, err)
 	}
@@ -213,7 +213,7 @@ func TestStableNoReturnToRecovered(t *testing.T) {
 	// there is no return-to-primary semantics.
 	time.Sleep(80 * time.Millisecond)
 	aCalls := first.calls.Load()
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		_, err = group.Exchange(context.Background(), testQuery())
 		require.NoError(t, err)
 	}
@@ -252,7 +252,7 @@ func TestSurvivalRotatesByOldestError(t *testing.T) {
 	// last error — alternation emerges because every attempt refreshes
 	// the mark.
 	var sequence []int32
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		_, err := group.Exchange(context.Background(), testQuery())
 		require.Error(t, err)
 		sequence = append(sequence, totalCalls(first, second))
@@ -281,9 +281,10 @@ func TestSurvivalSuccessRestoresService(t *testing.T) {
 	// Survival attempts rotate; within two queries one lands on a,
 	// SUCCEEDS, and a's errors are erased — service restored.
 	var response *mDNS.Msg
-	for i := 0; i < 2 && response == nil; i++ {
+	for range 2 {
 		if resp, err := group.Exchange(context.Background(), testQuery()); err == nil {
 			response = resp
+			break
 		}
 	}
 	require.NotNil(t, response, "survival must find the recovered server within the rotation")
@@ -298,7 +299,7 @@ func TestSurvivalSuccessRestoresService(t *testing.T) {
 	}
 	require.True(t, aState.Clean)
 	bCalls := second.calls.Load()
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := group.Exchange(context.Background(), testQuery())
 		require.NoError(t, err)
 	}
