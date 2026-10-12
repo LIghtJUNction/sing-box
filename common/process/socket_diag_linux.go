@@ -203,11 +203,16 @@ func querySocketDiag(fd int, request []byte) (inode, uid uint32, err error) {
 	if err != nil {
 		return 0, 0, E.Cause(err, "read netlink response")
 	}
-	messages, err := syscall.ParseNetlinkMessage(buffer[:n])
+	// lx:begin socket-diag-message-iterator
+	messages, err := parseSocketDiagMessages(buffer[:n])
+	// lx:end socket-diag-message-iterator
 	if err != nil {
 		return 0, 0, E.Cause(err, "parse netlink message")
 	}
-	for _, message := range messages {
+	// lx:begin socket-diag-message-iterator
+	for len(messages) > 0 {
+		message := messages.next()
+		// lx:end socket-diag-message-iterator
 		switch message.Header.Type {
 		case syscall.NLMSG_ERROR:
 			err = unpackSocketDiagError(&message)
@@ -260,8 +265,10 @@ func dumpSocketDiagFamily(family, protocol uint8, source netip.AddrPort, destina
 		wildcardMatch    socketDiagEntry
 		hasWildcardMatch bool
 		n                int
-		messages         []syscall.NetlinkMessage
 	)
+	// lx:begin socket-diag-message-iterator
+	var messages socketDiagMessages
+	// lx:end socket-diag-message-iterator
 	buffer := socketDiagBufferPool.Get().(*[64 << 10]byte)
 	defer socketDiagBufferPool.Put(buffer)
 	for {
@@ -269,14 +276,19 @@ func dumpSocketDiagFamily(family, protocol uint8, source netip.AddrPort, destina
 		if err != nil {
 			return 0, 0, E.Cause(err, "read netlink response")
 		}
-		messages, err = syscall.ParseNetlinkMessage(buffer[:n])
+		// lx:begin socket-diag-message-iterator
+		messages, err = parseSocketDiagMessages(buffer[:n])
+		// lx:end socket-diag-message-iterator
 		if err != nil {
 			return 0, 0, E.Cause(err, "parse netlink message")
 		}
 		if len(messages) == 0 {
 			return 0, 0, E.New("empty netlink response")
 		}
-		for _, message := range messages {
+		// lx:begin socket-diag-message-iterator
+		for len(messages) > 0 {
+			message := messages.next()
+			// lx:end socket-diag-message-iterator
 			switch message.Header.Type {
 			case syscall.NLMSG_DONE:
 				if hasLocalMatch {
