@@ -8,9 +8,6 @@ import (
 	"net/http"
 	"testing"
 	"time"
-
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 // Regression guard for LxBox issue #100 (lx: SPEC 077): a strict DNS-over-TCP
@@ -56,7 +53,7 @@ func answeringServer(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	server := &http.Server{Handler: h2c.NewHandler(handler, &http2.Server{})}
+	server := newH2CTestServer(handler)
 	go server.Serve(listener)
 	t.Cleanup(func() { server.Close() })
 	return listener.Addr().String()
@@ -90,7 +87,7 @@ func TestStreamOneShortExchangesAfterDialCancel(t *testing.T) {
 	t.Run("dial-per-query", func(t *testing.T) {
 		t.Parallel()
 		client := liveH2CClient(t, answeringServer(t), modeStreamOne)
-		for i := 0; i < shortExchanges; i++ {
+		for i := range shortExchanges {
 			ctx, cancel := context.WithCancelCause(context.Background())
 			conn, err := client.DialContext(ctx)
 			cancel(nil)
@@ -111,7 +108,7 @@ func TestStreamOneShortExchangesAfterDialCancel(t *testing.T) {
 			t.Fatalf("dial: %v", err)
 		}
 		defer conn.Close()
-		for i := 0; i < shortExchanges; i++ {
+		for i := range shortExchanges {
 			exchangeOnce(t, conn, uint16(i))
 		}
 	})

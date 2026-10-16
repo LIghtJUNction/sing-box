@@ -595,7 +595,7 @@ func (e *Endpoint) TransferTotals() uint64 {
 		return 0
 	}
 	var total uint64
-	for _, line := range strings.Split(ipc, "\n") {
+	for line := range strings.SplitSeq(ipc, "\n") {
 		if value, ok := strings.CutPrefix(line, "rx_bytes="); ok {
 			if n, err := strconv.ParseUint(value, 10, 64); err == nil {
 				total += n

@@ -5,11 +5,10 @@ package wireguard
 import (
 	"context"
 	"errors"
-	"testing"
-	"time"
-
 	"net/netip"
 	"sync/atomic"
+	"testing"
+	"time"
 
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-tun"

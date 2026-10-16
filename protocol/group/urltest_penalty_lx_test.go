@@ -198,7 +198,7 @@ func TestMaybeForceRetest_levelTriggerWithGap(t *testing.T) {
 	// Глушим реальный прогон: checking=true → CheckOutbounds(force) — мгновенный no-op.
 	g.checking.Store(true)
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		g.penaltyAdd("a")
 	}
 	g.maybeForceRetest()
@@ -208,7 +208,7 @@ func TestMaybeForceRetest_levelTriggerWithGap(t *testing.T) {
 		t.Fatal("partial health (b at 0) must not force a retest")
 	}
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		g.penaltyAdd("b")
 	}
 	g.maybeForceRetest() // теперь тотально → стреляет
@@ -250,7 +250,7 @@ func TestUrlTest_passiveSkipDisabledInEmergency(t *testing.T) {
 	}
 
 	// Аварийный режим (лучший a ≥3): skip отключён, пробы идут, штрафы смываются.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		g.penaltyAdd("a")
 	}
 	// История свежая — заставим testNodes перепробовать, состарив её.
