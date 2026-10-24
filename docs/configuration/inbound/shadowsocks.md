@@ -87,6 +87,18 @@ Both if empty.
 | 2022 methods  | `sing-box generate rand --base64 <Key Length>` |
 | other methods | any string                                     |
 
+#### users
+
+Additional users for Shadowsocks 2022 multi-user mode.
+
+Each user has a `name` used for identification and an individual `password`.
+
+#### destinations
+
+Relay destinations for Shadowsocks 2022 relay mode.
+
+Each destination defines its `name`, `server`, `server_port`, and relay `password`.
+
 #### managed
 
 Defaults to `false`. Enable this when the inbound is managed by the [SSM API](/configuration/service/ssm-api) for dynamic user.

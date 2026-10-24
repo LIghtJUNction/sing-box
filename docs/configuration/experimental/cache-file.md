@@ -24,6 +24,7 @@
   "path": "",
   "cache_id": "",
   "store_fakeip": false,
+  // Deprecated
   "store_rdrc": false,
   "rdrc_timeout": "",
   "store_dns": false,
