@@ -83,7 +83,7 @@ Default outbound tag. the first outbound will be used if empty.
 
 !!! quote ""
 
-    Only supported on Linux, Windows and macOS.
+    Supported on Linux, Windows, macOS, and Android graphical clients.
 
 Bind outbound connections to the default NIC by default to prevent routing loops under tun.
 
