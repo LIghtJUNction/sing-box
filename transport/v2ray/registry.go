@@ -59,6 +59,10 @@ func init() {
 		return NewQUICClient(ctx, dialer, serverAddr, options.QUICOptions, tlsConfig)
 	})
 	RegisterClient(C.V2RayTransportTypeHTTPUpgrade, func(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayTransportOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
-		return v2rayhttpupgrade.NewClient(ctx, dialer, serverAddr, options.HTTPUpgradeOptions, tlsConfig)
+		client, err := v2rayhttpupgrade.NewClient(ctx, dialer, serverAddr, options.HTTPUpgradeOptions, tlsConfig)
+		if err != nil {
+			return nil, err
+		}
+		return client, nil
 	})
 }
