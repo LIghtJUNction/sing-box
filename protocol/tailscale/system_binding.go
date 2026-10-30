@@ -22,12 +22,15 @@ import (
 type systemBinding struct {
 	control      func(network, address string, conn syscall.RawConn) error
 	listenPacket func(ctx context.Context, network, address string) (nettype.PacketConn, error)
+	defaultRoute func() (netmon.DefaultRouteDetails, error)
 }
 
 func newSystemBinding(ctx context.Context, logger logger.ContextLogger) (systemBinding, error) {
 	network := service.FromContext[adapter.NetworkManager](ctx)
 	platformInterface := service.FromContext[adapter.PlatformInterface](ctx)
+	// lx: preserve eBPF socket exemption on every upstream binding path.
 	socketProtectFunc := adapter.EBPFSocketProtectionControl(ctx)
+	var binding systemBinding
 	if platformInterface != nil && platformInterface.UsePlatformNetworkInterfaces() {
 		err := network.UpdateInterfaces()
 		if err != nil {
@@ -52,59 +55,72 @@ func newSystemBinding(ctx context.Context, logger logger.ContextLogger) (systemB
 				}
 			}), nil
 		})
+		binding.defaultRoute = func() (netmon.DefaultRouteDetails, error) {
+			defaultInterface := network.InterfaceMonitor().DefaultInterface()
+			if defaultInterface == nil {
+				return netmon.DefaultRouteDetails{}, nil
+			}
+			return netmon.DefaultRouteDetails{
+				InterfaceName:  defaultInterface.Name,
+				InterfaceIndex: defaultInterface.Index,
+			}, nil
+		}
 	}
 	if network.AutoRedirectOutputMark() != 0 {
-		return systemBinding{control: control.Append(socketProtectFunc, network.AutoRedirectOutputMarkFunc())}, nil
+		binding.control = control.Append(socketProtectFunc, network.AutoRedirectOutputMarkFunc())
+		return binding, nil
 	}
 	if platformInterface != nil && platformInterface.UsePlatformNetworkInterfaces() {
 		if platformInterface.UsePlatformAutoDetectInterfaceControl() {
-			return systemBinding{control: control.Append(socketProtectFunc, func(network, address string, conn syscall.RawConn) error {
+			binding.control = control.Append(socketProtectFunc, func(_, _ string, conn syscall.RawConn) error {
 				return control.Raw(conn, func(fileDescriptor uintptr) error {
 					return platformInterface.AutoDetectInterfaceControl(int(fileDescriptor))
 				})
-			})}, nil
+			})
+			return binding, nil
 		}
 		// NEPacketTunnelProvider sockets are excluded from tunnel routes by
 		// NECP; the empty override only suppresses tailscale's own
 		// default-interface bind, which would select the sing-box utun.
-		return systemBinding{control: control.Append(socketProtectFunc, func(string, string, syscall.RawConn) error {
+		binding.control = control.Append(socketProtectFunc, func(string, string, syscall.RawConn) error {
 			return nil
-		})}, nil
+		})
+		return binding, nil
 	}
 	bindFunc := network.AutoDetectInterfaceFunc()
 	if bindFunc == nil {
-		return systemBinding{control: socketProtectFunc}, nil
+		binding.control = socketProtectFunc // lx: eBPF exemption also applies without route binding.
+		return binding, nil
 	}
-	return systemBinding{
-		control: control.Append(socketProtectFunc, bindFunc),
-		listenPacket: func(ctx context.Context, networkName string, address string) (nettype.PacketConn, error) {
-			listenConfig := net.ListenConfig{
-				Control: control.Append(control.Append(socketProtectFunc, bindFunc), control.DisableUDPNetReset()),
-			}
-			packetConn, err := listenConfig.ListenPacket(ctx, networkName, address)
-			if err != nil {
-				return nil, err
-			}
-			udpConn := packetConn.(*net.UDPConn)
-			egressPool := tun.NewUDPEgressPool(tun.UDPEgressPoolOptions{
-				Logger:           logger,
-				Network:          networkName,
-				Control:          socketProtectFunc,
-				InterfaceFinder:  network.InterfaceFinder(),
-				InterfaceMonitor: network.InterfaceMonitor(),
-				IsExempt: func() bool {
-					return network.AutoRedirectOutputMark() != 0
-				},
-			})
-			if !egressPool.SetEgressPort(udpConn.LocalAddr().(*net.UDPAddr).AddrPort().Port()) {
-				egressPool.Close()
-				return udpConn, nil
-			}
-			return tun.NewUDPEgressConn(udpConn, egressPool), nil
-		},
-	}, nil
+	binding.control = control.Append(socketProtectFunc, bindFunc)
+	binding.listenPacket = func(listenContext context.Context, networkName string, address string) (nettype.PacketConn, error) {
+		listenConfig := net.ListenConfig{
+			Control: control.Append(control.Append(socketProtectFunc, bindFunc), control.DisableUDPNetReset()),
+		}
+		packetConn, err := listenConfig.ListenPacket(listenContext, networkName, address)
+		if err != nil {
+			return nil, err
+		}
+		udpConn := packetConn.(*net.UDPConn)
+		egressPool := tun.NewUDPEgressPool(tun.UDPEgressPoolOptions{
+			Logger:           logger,
+			Network:          networkName,
+			Control:          socketProtectFunc, // lx: keep dynamically created egress sockets exempt.
+			InterfaceFinder:  network.InterfaceFinder(),
+			InterfaceMonitor: network.InterfaceMonitor(),
+			IsExempt: func() bool {
+				return network.AutoRedirectOutputMark() != 0
+			},
+		})
+		if !egressPool.SetEgressPort(udpConn.LocalAddr().(*net.UDPAddr).AddrPort().Port()) {
+			egressPool.Close()
+			return udpConn, nil
+		}
+		return tun.NewUDPEgressConn(udpConn, egressPool), nil
+	}
+	return binding, nil
 }
 
 func (b systemBinding) hooks(dialer N.Dialer) netmon.Hooks {
-	return netmon.Hooks{Dialer: dialer, Control: b.control, ListenPacket: b.listenPacket}
+	return netmon.Hooks{Dialer: dialer, Control: b.control, ListenPacket: b.listenPacket, DefaultRoute: b.defaultRoute}
 }
