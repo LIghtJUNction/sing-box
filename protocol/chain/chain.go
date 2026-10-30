@@ -217,7 +217,7 @@ func (c *Chain) start() error {
 	}
 	for i, h := range c.hops {
 		if err := registrar.AddInternal(h); err != nil {
-			for j := 0; j < i; j++ {
+			for j := range i {
 				registrar.RemoveInternal(c.hops[j].Tag())
 			}
 			return E.Cause(err, "register hop ", i)

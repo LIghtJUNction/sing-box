@@ -7,14 +7,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
-	"github.com/sagernet/sing-box/adapter"
 )
 
 func privateTailscaleLog(message string) string {
-	if index := strings.Index(message, "https://login.tailscale.com/a/"); index >= 0 {
-		return message[:index] + "[private Tailscale login URL]"
+	if prefix, _, found := strings.Cut(message, "https://login.tailscale.com/a/"); found {
+		return prefix + "[private Tailscale login URL]"
 	}
 	return message
 }

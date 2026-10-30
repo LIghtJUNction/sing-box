@@ -89,9 +89,10 @@ type Transport struct {
 	access   sync.Mutex
 	members  []*member
 	records  map[string]*memberRecord
-	current  string // sticky target (stable/fastest); "" = not chosen yet
-	election bool   // fastest: an election fan is in flight (single-flight)
-	gen      int    // bumped by Reset; a finishing fan from an older gen drops state writes
+	current  string    // sticky target (stable/fastest); "" = not chosen yet
+	election bool      // fastest: an election fan is in flight (single-flight)
+	gen      int       // bumped by Reset; a finishing fan from an older gen drops state writes
+	lastErr  time.Time // strictly orders failures even on coarse-resolution clocks
 }
 
 func NewTransport(ctx context.Context, logger log.ContextLogger, tag string, options option.GroupDNSServerOptions) (adapter.DNSTransport, error) {
@@ -176,6 +177,7 @@ func (t *Transport) Reset() {
 	defer t.access.Unlock()
 	t.records = make(map[string]*memberRecord)
 	t.current = ""
+	t.lastErr = time.Time{}
 	t.gen++
 	// `election` is left as-is: an in-flight fan still owns the flag and
 	// clears it on completion; its state writes are dropped by the gen check.
@@ -240,7 +242,12 @@ func (t *Transport) noteError(tag string, gen int) {
 		return
 	}
 	record := t.recordLocked(tag)
-	record.errors = appendCapped(record.errors, time.Now())
+	now := time.Now()
+	if !now.After(t.lastErr) {
+		now = t.lastErr.Add(time.Nanosecond)
+	}
+	t.lastErr = now
+	record.errors = appendCapped(record.errors, now)
 	record.wins = nil
 }
 
@@ -448,7 +455,7 @@ func (t *Transport) exchangeSingle(ctx context.Context, message *mDNS.Msg, sel s
 		}
 	}
 	targetCtx, cancel := context.WithTimeout(ctx, t.targetBudget(ctx))
-	response, err, rtt := t.timedExchange(targetCtx, sel.target, message)
+	response, rtt, err := t.timedExchange(targetCtx, sel.target, message)
 	cancel()
 	t.traceAttempt(ctx, sel.target, response, err, rtt)
 	if !isFailure(response, err) {
@@ -475,7 +482,7 @@ func (t *Transport) exchangeSurvival(ctx context.Context, message *mDNS.Msg, sel
 	target := sel.target
 	dnstrack.MarkSurvival(ctx)
 	t.logger.WarnContext(ctx, "group[", t.Tag(), "]: no clean servers, survival attempt via ", target.tag)
-	response, err, rtt := t.timedExchange(ctx, target, message)
+	response, rtt, err := t.timedExchange(ctx, target, message)
 	t.traceAttempt(ctx, target, response, err, rtt)
 	if !isFailure(response, err) {
 		t.noteSuccess(target.tag, rtt, sel.gen) // erases its errors → back to clean, stickiness holds it
@@ -498,10 +505,10 @@ func (t *Transport) targetBudget(ctx context.Context) time.Duration {
 	return C.DNSTimeout / 2
 }
 
-func (t *Transport) timedExchange(ctx context.Context, current *member, message *mDNS.Msg) (*mDNS.Msg, error, time.Duration) {
+func (t *Transport) timedExchange(ctx context.Context, current *member, message *mDNS.Msg) (*mDNS.Msg, time.Duration, error) {
 	started := time.Now()
 	response, err := current.transport.Exchange(ctx, message)
-	return response, err, time.Since(started)
+	return response, time.Since(started), err
 }
 
 // cleanExcept returns the clean members minus the given tag.

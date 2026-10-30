@@ -858,11 +858,7 @@ func (g *URLTestGroup) performUpdateCheck() {
 
 // poolSize is the effective pool size for the current node set: min(configured, available).
 func (g *URLTestGroup) poolSize() int {
-	size := g.balancer.poolSize
-	if size > len(g.outbounds) {
-		size = len(g.outbounds)
-	}
-	return size
+	return min(g.balancer.poolSize, len(g.outbounds))
 }
 
 // balancePool is the per-interval lazy health-check for round_robin. It tests no more nodes
@@ -916,10 +912,7 @@ func (g *URLTestGroup) balancePoolFirstLive(ctx context.Context, size int) map[s
 	// empty slot becomes "" (a hole to be refilled). Never compact — shifting a living node
 	// across slots would move every sticky key bound to it (the SPEC invariant, see the file
 	// header in urltest_balance_lx.go). next is at least `size` long so the pool can grow.
-	slotCount := size
-	if len(current) > slotCount {
-		slotCount = len(current)
-	}
+	slotCount := max(size, len(current))
 	next := make([]string, slotCount)
 	for i, tag := range current {
 		if tag != "" && liveTag(tag) {
@@ -947,10 +940,7 @@ func (g *URLTestGroup) balancePoolFirstLive(ctx context.Context, size int) map[s
 		}
 		fill := 0
 		for start := 0; start < len(candidates) && emptySlot(fill) >= 0; start += size {
-			end := start + size
-			if end > len(candidates) {
-				end = len(candidates)
-			}
+			end := min(start+size, len(candidates))
 			batch := candidates[start:end]
 			tested := g.testNodes(ctx, batch, true)
 			// Take live ones in config order (batch is already in config order).

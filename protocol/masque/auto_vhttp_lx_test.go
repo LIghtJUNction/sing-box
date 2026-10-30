@@ -109,9 +109,9 @@ func TestRememberNetworkSticks(t *testing.T) {
 func TestRememberNetworkIsRaceFree(t *testing.T) {
 	o := newAutoOutbound(true, "h3")
 	var done atomic.Int32
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		go func(i int) {
-			for j := 0; j < 200; j++ {
+			for range 200 {
 				if i%2 == 0 {
 					o.rememberNetwork("h3")
 				} else {

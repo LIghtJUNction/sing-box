@@ -217,7 +217,7 @@ func TestRoundRobinRotation(t *testing.T) {
 	fb := &balNode{tag: "fb"}
 	const rounds = 3000
 	count := map[string]int{}
-	for i := 0; i < rounds; i++ {
+	for range rounds {
 		count[b.pick(context.Background(), M.Socksaddr{}, fb, resolve).Tag()]++
 	}
 	for _, tag := range []string{"a", "b", "c"} {
@@ -254,7 +254,7 @@ func TestStickySlotHashStable(t *testing.T) {
 	b.setSlots([]string{"a", "b", "c", "d"})
 	_, resolve := resolveFrom("a", "b", "c", "d")
 	first := b.pick(context.Background(), destDomain("example.com"), nil, resolve).Tag()
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		got := b.pick(context.Background(), destDomain("example.com"), nil, resolve).Tag()
 		if got != first {
 			t.Fatalf("sticky key must map to one node: %s != %s", got, first)
@@ -292,7 +292,7 @@ func TestStickyEmptyKeyFixedSlot(t *testing.T) {
 	b.setSlots([]string{"a", "b", "c"})
 	_, resolve := resolveFrom("a", "b", "c")
 	first := b.pick(context.Background(), M.Socksaddr{}, nil, resolve).Tag()
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		if got := b.pick(context.Background(), M.Socksaddr{}, nil, resolve).Tag(); got != first {
 			t.Fatalf("empty-key flows must not rotate: %s != %s", got, first)
 		}

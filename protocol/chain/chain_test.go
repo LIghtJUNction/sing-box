@@ -379,12 +379,7 @@ func assertTrace(t *testing.T, got []string, want ...string) {
 }
 
 func contains(list []string, item string) bool {
-	for _, it := range list {
-		if it == item {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, item)
 }
 
 // ---- тесты ------------------------------------------------------------------
