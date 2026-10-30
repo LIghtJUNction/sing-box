@@ -665,28 +665,21 @@ func (e *Endpoint) applyPauseEvent(event int) {
 		e.pauseApplyHookForTest(event)
 		return
 	}
-	// lx: SPEC 020 level 3 — a torn-down endpoint has no device at all; the
-	// callback is unregistered by Teardown, but a pause event already in flight
-	// must not nil-deref.
-	wgDevice := e.device.Load()
+	// lx: SPEC 071 serializes this with Close/Teardown under pauseOpAccess.
+	// Read the current manager state, as upstream does, so delayed callbacks
+	// cannot undo a newer pause transition. Preserve idle-suspend ownership.
 	switch event {
-	case pause.EventNetworkPause:
-		e.networkPaused = true
-		if wgDevice != nil {
-			wgDevice.Down()
-		}
-	case pause.EventNetworkWake:
-		e.networkPaused = false
+	case pause.EventNetworkPause, pause.EventNetworkWake:
+		e.networkPaused = e.pause.IsNetworkPaused()
+		wgDevice := e.device.Load()
 		if wgDevice == nil {
 			return
 		}
-		// lx: SPEC 020/007 — a suspended device (idle-suspend or AWG guard) stays
-		// down through pause/wake cycles; the owning state machine wakes it
-		// (resumeOnDial) or keeps it down (guard) on its own terms.
-		if e.suspended.Load() || e.idle.Load() {
-			return
+		if e.networkPaused {
+			wgDevice.Down()
+		} else if !e.suspended.Load() && !e.idle.Load() {
+			wgDevice.Up()
 		}
-		wgDevice.Up()
 	}
 }
 

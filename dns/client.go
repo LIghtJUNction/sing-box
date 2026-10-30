@@ -13,6 +13,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/compatible"
 	"github.com/sagernet/sing-box/common/dnstrack"
+	"github.com/sagernet/sing-box/common/interrupt"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -306,19 +307,22 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 		}
 		for {
 			response, ttl, isStale := c.loadResponse(cacheKey)
-			if response != nil {
-				if isStale && !options.DisableOptimisticCache {
+			if response != nil && (!isStale || !options.DisableOptimisticCache) {
+				operation.release()
+				if isStale {
 					c.backgroundRefreshDNS(transport, cacheKey, message.Copy(), options, responseChecker)
-					logOptimisticResponse(c.logger, ctx, transport, response)
-					response.Id = message.Id
-					operation.release()
-					return nil, response, exchangeDone, nil
-				} else if !isStale {
-					logCachedResponse(c.logger, ctx, transport, response, ttl)
-					response.Id = message.Id
-					operation.release()
-					return nil, response, exchangeDone, nil
 				}
+				if responseChecker != nil && !responseChecker(response) {
+					logRejectedResponse(c.logger, ctx, response)
+					return nil, nil, exchangeDone, ErrResponseRejectedCached
+				}
+				if isStale {
+					logOptimisticResponse(c.logger, ctx, transport, response)
+				} else {
+					logCachedResponse(c.logger, ctx, transport, response, ttl)
+				}
+				response.Id = message.Id
+				return nil, response, exchangeDone, nil
 			}
 			if !loaded {
 				break
@@ -347,8 +351,8 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 		operation.release()
 		return nil, nil, exchangeDone, E.New("DNS query loopback in transport[", contextTransport, "]")
 	}
-	operation.ctx = adapter.ContextWithDNSTransportTag(ctx, transport.Tag())
-	if transport.Type() == C.DNSTypeGroup { // lx: SPEC 035 — the group fills in the answering member + probe trace for stream attribution
+	operation.ctx = adapter.ContextWithDNSTransportTag(interrupt.ContextWithIsExternalConnection(ctx, false), transport.Tag())
+	if transport.Type() == C.DNSTypeGroup { // lx: SPEC 035 — preserve answering-member attribution.
 		operation.ctx = dnstrack.WithQueryTraceIfTracking(operation.ctx)
 	}
 	if !disableCache && responseChecker != nil && c.rdrc != nil {
@@ -585,11 +589,15 @@ func (c *Client) questionCache(ctx context.Context, transport adapter.DNSTranspo
 			return nil, ErrNotCached
 		}
 		c.backgroundRefreshDNS(transport, cacheKey, c.prepareExchangeMessage(message.Copy(), options), options, responseChecker)
-		logOptimisticResponse(c.logger, ctx, transport, response) // lx: SPEC 018 (transport arg)
+	}
+	if responseChecker != nil && !responseChecker(response) {
+		logRejectedResponse(c.logger, ctx, response)
+		return nil, ErrResponseRejectedCached
+	}
+	if isStale {
+		logOptimisticResponse(c.logger, ctx, transport, response)
 	} else {
-		// Fresh cache hit on the Lookup path: log/emit as SourceCached, mirroring the
-		// Exchange path (stale→optimistic, fresh→cached). Without this, internal domain
-		// resolution served from a fresh cache emits no DnsQueryEvent (SPEC 022 #3).
+		// lx: SPEC 022 — fresh Lookup hits still emit SourceCached.
 		logCachedResponse(c.logger, ctx, transport, response, ttl)
 	}
 	if response.Rcode != dns.RcodeSuccess {
