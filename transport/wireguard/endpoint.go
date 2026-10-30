@@ -670,6 +670,9 @@ func (e *Endpoint) applyPauseEvent(event int) {
 	// cannot undo a newer pause transition. Preserve idle-suspend ownership.
 	switch event {
 	case pause.EventNetworkPause, pause.EventNetworkWake:
+		if e.pause == nil {
+			return // lx: an endpoint that has not started has no pause manager.
+		}
 		e.networkPaused = e.pause.IsNetworkPaused()
 		wgDevice := e.device.Load()
 		if wgDevice == nil {
