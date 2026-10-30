@@ -1094,7 +1094,7 @@ func TestChainToggleInterrupt(t *testing.T) {
 	openUDP := func(chainTag string, external bool) net.PacketConn {
 		ctx := s.ctx
 		if external {
-			ctx = interrupt.ContextWithIsExternalConnection(ctx)
+			ctx = interrupt.ContextWithIsExternalConnection(ctx, true)
 		}
 		pconn, err := s.chainOf(chainTag).ListenPacket(ctx, M.ParseSocksaddr("1.1.1.1:53"))
 		if err != nil {
