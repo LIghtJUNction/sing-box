@@ -13,11 +13,11 @@ All files from the pinned commit are retained. Its AmneziaWG header protection,
 packet padding, ranged timers, receive classification and bind recovery patches
 are preserved while carrying the complete required upstream line below.
 
-## Complete upstream synchronization
+## Initial tracked synchronization
 
 The upstream base of the original fork is
 `c6c8a831ef7091d564dad5452703c8e82b3c800e`. The full source delta from that base
-through SagerNet's required
+through SagerNet's then-required
 [`ca3bc60c4ce798c157689a9d653041470e627795`](https://github.com/SagerNet/wireguard-go/commit/ca3bc60c4ce798c157689a9d653041470e627795)
 was applied by three-way merge, retaining the AWG and recovery differences.
 This covers all six intervening upstream commits, rather than only new API
@@ -53,6 +53,28 @@ snapshot is reproducible without modifying or publishing a third-party fork.
 The parent transport uses the native blocking peer API; it does not substitute
 a separate nonblocking queue for the new upstream behavior.
 
+## Current upstream synchronization
+
+The tracked snapshot now carries the complete source-tree delta from
+`ca3bc60c4ce798c157689a9d653041470e627795` through
+[`fdf0ad04658666a57f15da1b0eea30c08b0a94db`](https://github.com/SagerNet/wireguard-go/commit/fdf0ad04658666a57f15da1b0eea30c08b0a94db),
+as required by the parent core. Upstream rewrote the PSK and blocking-injection
+commits; their replacements are patch-equivalent to the already integrated
+versions. Comparing the fixed source trees identifies three additional fixes:
+
+| Upstream commit | Carried behavior |
+| --- | --- |
+| `34ff6c5e8c949dd97978932741760290d4eb767f` | Restore the full IPv6 destination when reusing a pooled address shortened by an earlier IPv4 send. |
+| `3a027ec9911537e4fbe0f2346b4dc6eda00658b3` | Include system sleep in key and handshake ages; retain the fork's AWG-configured expiry and rekey intervals. |
+| `e4d85ef2ed387cc07233b5324d4a40f3df94566e` | Wait for resume outside timer locks; reject stale callbacks after cancellation or deadline replacement. |
+
+The entire delta spans `conn/bind_std.go`, `device/device.go`,
+`device/receive.go`, `device/send.go` and `device/timers.go`. The merge keeps
+AWG header protection, padding, reserved-byte guards, recovery behavior and
+blocking packet injection intact. Sleep-aware age calculations use the same
+AWG timeout accessors as before; they do not substitute upstream constants
+for configured intervals. Buffer sizes and allocation pools are unchanged.
+
 ## Regression evidence
 
 - `device/peer_lookup_psk_test.go` exercises real Noise authentication and both
@@ -64,3 +86,8 @@ a separate nonblocking queue for the new upstream behavior.
 - Existing AWG tests exercise TUN reads, `InputPackets`, native `WritePackets`,
   header protection, transport padding and the other retained send paths.
 - Darwin connection code is cross-compiled; no Darwin runtime result is claimed.
+- `conn/address_reuse_lx_test.go` sends a real IPv6 loopback datagram using
+  a pooled address with stale IPv6 tail bytes and an IPv4-length slice.
+- `device/timers_pause_lx_test.go` verifies that cancellation completes during
+  pause and that an old callback cannot fire before a replacement deadline.
+  Both timer cases and the IPv6 case reproduce failures on the previous snapshot.
