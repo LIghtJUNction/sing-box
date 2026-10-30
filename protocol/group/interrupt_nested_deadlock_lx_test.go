@@ -64,7 +64,7 @@ func newNestedSelectorsUnderTest(t *testing.T) (outer, inner *Selector, nodeA, n
 
 	ctx := context.Background()
 	ctx = service.ContextWith[adapter.OutboundManager](ctx, mgr)
-	ctx = service.ContextWith[adapter.ConnectionManager](ctx, route.NewConnectionManager(logger.NOP()))
+	ctx = service.ContextWith[adapter.ConnectionManager](ctx, route.NewConnectionManager(ctx, logger.NOP()))
 
 	newSelector := func(tag string, tags []string) *Selector {
 		return &Selector{

@@ -20,7 +20,7 @@ func (l *rejectionLogger) ErrorContext(context.Context, ...any) { l.errors++ }
 
 func TestDialErrorsOnlyDowngradeExplicitPolicyRejections(t *testing.T) {
 	l := new(rejectionLogger)
-	m := NewConnectionManager(l)
+	m := NewConnectionManager(context.Background(), l)
 	m.logDialError(context.Background(), fmt.Errorf("selector: %w", &R.RejectedError{Cause: syscall.EPERM}))
 	m.logDialError(context.Background(), fmt.Errorf("socket: %w", syscall.EPERM))
 	m.logDialError(context.Background(), context.DeadlineExceeded)

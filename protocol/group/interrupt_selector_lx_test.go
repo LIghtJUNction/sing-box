@@ -114,7 +114,7 @@ func newSelectorUnderTest(t *testing.T, interruptExisting bool) (*Selector, *pro
 
 	ctx := context.Background()
 	ctx = service.ContextWith[adapter.OutboundManager](ctx, mgr)
-	ctx = service.ContextWith[adapter.ConnectionManager](ctx, route.NewConnectionManager(logger.NOP()))
+	ctx = service.ContextWith[adapter.ConnectionManager](ctx, route.NewConnectionManager(ctx, logger.NOP()))
 
 	sel := &Selector{
 		Adapter:                      outbound.NewAdapter(C.TypeSelector, "sel", nil, []string{"node-a", "node-b"}),
@@ -230,7 +230,7 @@ func TestLxSelectorInterruptHandlerBranch(t *testing.T) {
 
 	ctx := context.Background()
 	ctx = service.ContextWith[adapter.OutboundManager](ctx, mgr)
-	ctx = service.ContextWith[adapter.ConnectionManager](ctx, route.NewConnectionManager(logger.NOP()))
+	ctx = service.ContextWith[adapter.ConnectionManager](ctx, route.NewConnectionManager(ctx, logger.NOP()))
 
 	sel := &Selector{
 		Adapter:                      outbound.NewAdapter(C.TypeSelector, "sel", nil, []string{"node-a", "node-b"}),

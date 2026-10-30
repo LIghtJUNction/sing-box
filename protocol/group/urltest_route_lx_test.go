@@ -64,7 +64,7 @@ func newRoutedURLTest(t *testing.T, nodes []*routedDialNode, options option.URLT
 		options.Outbounds = append(options.Outbounds, node.tag)
 	}
 	ctx := service.ContextWith[adapter.OutboundManager](context.Background(), manager)
-	ctx = service.ContextWith[adapter.ConnectionManager](ctx, route.NewConnectionManager(log.NewNOPFactory().NewLogger("connection-test")))
+	ctx = service.ContextWith[adapter.ConnectionManager](ctx, route.NewConnectionManager(ctx, log.NewNOPFactory().NewLogger("connection-test")))
 	ctx = service.ContextWithPtr(ctx, urltest.NewHistoryStorage())
 	created, err := NewURLTest(ctx, nil, log.NewNOPFactory().NewLogger("urltest-test"), "auto", options)
 	if err != nil {
