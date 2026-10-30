@@ -1,0 +1,33 @@
+ok  	github.com/sagernet/sing-box/adapter	0.004s
+?   	github.com/sagernet/sing-box/adapter/certificate	[no test files]
+ok  	github.com/sagernet/sing-box/adapter/endpoint	0.030s
+?   	github.com/sagernet/sing-box/adapter/inbound	[no test files]
+?   	github.com/sagernet/sing-box/adapter/outbound	[no test files]
+?   	github.com/sagernet/sing-box/adapter/service	[no test files]
+ok  	github.com/sagernet/sing-box/dns	0.967s
+ok  	github.com/sagernet/sing-box/dns/transport	6.437s
+?   	github.com/sagernet/sing-box/dns/transport/dhcp	[no test files]
+?   	github.com/sagernet/sing-box/dns/transport/fakeip	[no test files]
+ok  	github.com/sagernet/sing-box/dns/transport/group	1.723s
+ok  	github.com/sagernet/sing-box/dns/transport/hosts	0.005s
+?   	github.com/sagernet/sing-box/dns/transport/local	[no test files]
+?   	github.com/sagernet/sing-box/dns/transport/local/systemconfig	[no test files]
+?   	github.com/sagernet/sing-box/dns/transport/mdns	[no test files]
+?   	github.com/sagernet/sing-box/dns/transport/quic	[no test files]
+ok  	github.com/sagernet/sing-box/route	0.008s
+ok  	github.com/sagernet/sing-box/route/rule	0.010s
+ok  	github.com/sagernet/sing-box/protocol/chain	0.040s
+ok  	github.com/sagernet/sing-box/protocol/group	0.945s
+ok  	github.com/sagernet/sing-box/protocol/vless	0.065s
+?   	github.com/sagernet/sing-box/protocol/vless/encryption	[no test files]
+ok  	github.com/sagernet/sing-box/protocol/masque	0.494s
+ok  	github.com/sagernet/sing-box/protocol/tailscale	0.008s
+ok  	github.com/sagernet/sing-box/protocol/wireguard	0.004s
+ok  	github.com/sagernet/sing-box/transport/wireguard	0.997s
+ok  	github.com/sagernet/sing-box/transport/v2rayxhttp	1.820s
+ok  	github.com/sagernet/sing-box/common/ebpf	0.018s
+ok  	github.com/sagernet/sing-box/protocol/ebpf	0.010s
+ok  	github.com/sagernet/sing-box/include	0.019s
+ok  	github.com/sagernet/sing-box/option	0.010s
+ok  	github.com/sagernet/sing-box/lxd	2.234s
+ok  	github.com/sagernet/sing-box/experimental/libbox	0.277s
