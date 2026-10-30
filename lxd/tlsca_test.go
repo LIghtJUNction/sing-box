@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -76,6 +77,9 @@ func TestServerIdentityCorruptCertFails(t *testing.T) {
 }
 
 func TestServerIdentityUnreadableCertFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not enforce Unix chmod permission bits")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("chmod 0 does not block reads for root")
 	}
@@ -189,6 +193,9 @@ func TestGenerateIdentityCertProperties(t *testing.T) {
 }
 
 func TestServerIdentityKeyFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose Unix permission bits")
+	}
 	dir := t.TempDir()
 	if _, err := loadOrCreateServerIdentity(dir, time.Now()); err != nil {
 		t.Fatal(err)

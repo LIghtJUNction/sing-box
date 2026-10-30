@@ -464,7 +464,7 @@ func TestSessionIDDefaultIsUUID(t *testing.T) {
 func TestSessionIDTableAndLength(t *testing.T) {
 	t.Run("predefined table, fixed length", func(t *testing.T) {
 		c := clientWith(t, modePacketUp, intRange{0, 0}, metaOptions{SessionTable: "hex", SessionLength: "16"})
-		for i := 0; i < 64; i++ {
+		for range 64 {
 			id := c.newSessionID()
 			if len(id) != 16 {
 				t.Fatalf("id = %q (len %d), want 16", id, len(id))
@@ -477,7 +477,7 @@ func TestSessionIDTableAndLength(t *testing.T) {
 	t.Run("literal table, ranged length", func(t *testing.T) {
 		c := clientWith(t, modePacketUp, intRange{0, 0}, metaOptions{SessionTable: "abcXYZ789", SessionLength: "20-24"})
 		seenLengths := map[int]bool{}
-		for i := 0; i < 256; i++ {
+		for range 256 {
 			id := c.newSessionID()
 			if len(id) < 20 || len(id) > 24 {
 				t.Fatalf("id = %q (len %d), want length in [20,24]", id, len(id))

@@ -89,7 +89,7 @@ func TestPacketUpUploadsCountAgainstRequestLimit(t *testing.T) {
 	}
 	defer conn.Close()
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if _, err := conn.Write([]byte("payload")); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
