@@ -314,6 +314,7 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 				}
 				if responseChecker != nil && !responseChecker(response) {
 					logRejectedResponse(c.logger, ctx, response)
+					emitFailedQuery(ctx, transport, question, int32(response.Rcode), "rejected (cached)") // lx: SPEC 018
 					return nil, nil, exchangeDone, ErrResponseRejectedCached
 				}
 				if isStale {
@@ -592,6 +593,7 @@ func (c *Client) questionCache(ctx context.Context, transport adapter.DNSTranspo
 	}
 	if responseChecker != nil && !responseChecker(response) {
 		logRejectedResponse(c.logger, ctx, response)
+		emitFailedQuery(ctx, transport, question, int32(response.Rcode), "rejected (cached)") // lx: SPEC 018
 		return nil, ErrResponseRejectedCached
 	}
 	if isStale {
