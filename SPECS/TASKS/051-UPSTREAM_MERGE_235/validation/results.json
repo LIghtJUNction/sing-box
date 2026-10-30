@@ -1,0 +1,482 @@
+{
+  "go": "go1.26.10 linux/amd64",
+  "GOMAXPROCS": 1,
+  "build_tags": "default",
+  "old_version": "v0.9.7-0.20261002083955-3f8acd9da65b",
+  "new_version": "v0.9.7-0.20261028024126-5b0a1a7a394e",
+  "runs": 3,
+  "results": {
+    "old": [
+      {
+        "count": 1000,
+        "heap_delta_bytes": 291648,
+        "installed": 1000,
+        "retained_entries": 1000,
+        "scenario": "accepted_ack"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_active"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_half_fin"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_fin"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_rst"
+      },
+      {
+        "count": 10000,
+        "heap_delta_bytes": 2561072,
+        "installed": 10000,
+        "retained_entries": 10000,
+        "scenario": "accepted_ack"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_active"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_half_fin"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_fin"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_rst"
+      },
+      {
+        "count": 1000,
+        "heap_delta_bytes": 290448,
+        "installed": 1000,
+        "retained_entries": 1000,
+        "scenario": "accepted_ack"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_active"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_half_fin"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_fin"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_rst"
+      },
+      {
+        "count": 10000,
+        "heap_delta_bytes": 2561072,
+        "installed": 10000,
+        "retained_entries": 10000,
+        "scenario": "accepted_ack"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_active"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_half_fin"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_fin"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_rst"
+      },
+      {
+        "count": 1000,
+        "heap_delta_bytes": 290432,
+        "installed": 1000,
+        "retained_entries": 1000,
+        "scenario": "accepted_ack"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_active"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_half_fin"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_fin"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_rst"
+      },
+      {
+        "count": 10000,
+        "heap_delta_bytes": 2561072,
+        "installed": 10000,
+        "retained_entries": 10000,
+        "scenario": "accepted_ack"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_active"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_half_fin"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_fin"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_rst"
+      }
+    ],
+    "new": [
+      {
+        "count": 1000,
+        "heap_delta_bytes": 179648,
+        "installed": 1000,
+        "retained_entries": 0,
+        "scenario": "accepted_ack"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_active"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_half_fin"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 0,
+        "retained_sessions": 0,
+        "scenario": "nat_fin"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 0,
+        "retained_sessions": 0,
+        "scenario": "nat_rst"
+      },
+      {
+        "count": 10000,
+        "heap_delta_bytes": 1441072,
+        "installed": 10000,
+        "retained_entries": 0,
+        "scenario": "accepted_ack"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_active"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_half_fin"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 0,
+        "retained_sessions": 0,
+        "scenario": "nat_fin"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 0,
+        "retained_sessions": 0,
+        "scenario": "nat_rst"
+      },
+      {
+        "count": 1000,
+        "heap_delta_bytes": 178432,
+        "installed": 1000,
+        "retained_entries": 0,
+        "scenario": "accepted_ack"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_active"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_half_fin"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 0,
+        "retained_sessions": 0,
+        "scenario": "nat_fin"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 0,
+        "retained_sessions": 0,
+        "scenario": "nat_rst"
+      },
+      {
+        "count": 10000,
+        "heap_delta_bytes": 1441072,
+        "installed": 10000,
+        "retained_entries": 0,
+        "scenario": "accepted_ack"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_active"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_half_fin"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 0,
+        "retained_sessions": 0,
+        "scenario": "nat_fin"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 0,
+        "retained_sessions": 0,
+        "scenario": "nat_rst"
+      },
+      {
+        "count": 1000,
+        "heap_delta_bytes": 178432,
+        "installed": 1000,
+        "retained_entries": 0,
+        "scenario": "accepted_ack"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_active"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 1000,
+        "retained_sessions": 1000,
+        "scenario": "nat_half_fin"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 0,
+        "retained_sessions": 0,
+        "scenario": "nat_fin"
+      },
+      {
+        "count": 1000,
+        "elapsed_seconds": 31,
+        "installed": 1000,
+        "retained_addresses": 0,
+        "retained_sessions": 0,
+        "scenario": "nat_rst"
+      },
+      {
+        "count": 10000,
+        "heap_delta_bytes": 1441072,
+        "installed": 10000,
+        "retained_entries": 0,
+        "scenario": "accepted_ack"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_active"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 10000,
+        "retained_sessions": 10000,
+        "scenario": "nat_half_fin"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 0,
+        "retained_sessions": 0,
+        "scenario": "nat_fin"
+      },
+      {
+        "count": 10000,
+        "elapsed_seconds": 31,
+        "installed": 10000,
+        "retained_addresses": 0,
+        "retained_sessions": 0,
+        "scenario": "nat_rst"
+      }
+    ]
+  }
+}
