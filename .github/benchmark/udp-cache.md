@@ -44,3 +44,12 @@ the race detector:
 ```sh
 go test -race -count=1 -tags with_ebpf ./protocol/ebpf
 ```
+
+
+## Idle index retention (2026-11-03)
+
+Upstream testing e5d91fa79f6319d5de940d6c81d81f0fe53b9476 is already an ancestor of ff669d45. No upstream commits were missing. Burst-sized indexes (1024 entries) now release their map storage when empty; small indexes stay warm.
+
+Linux amd64 / i9-12900HX, 32768 clients created then removed, forced GC while keeping the table alive, three runs: baseline 3149632–3186872 retained heap bytes; changed 736–27416 bytes. These are process heap deltas in a synthetic test, not Android RSS or whole-core savings. Cache-hit benchmark: five 300ms runs, zero allocations before and after; 97.66–128.8 ns/op before, 84.26–104.6 after. Timing noise and sequential execution do not establish a throughput improvement.
+
+Reproduce with `go test -tags with_ebpf ./protocol/ebpf -run '^$' -bench BenchmarkUDPIdleIndexRetention -benchtime=1x -count=3`; compare against ff669d45 using a Go source overlay for udp_state.go so the benchmark harness stays identical.
