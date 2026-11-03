@@ -19,15 +19,20 @@ type udpClientTable struct {
 	clientShards       [udpClientShardCount]udpClientShard
 	redirectAccess     sync.Mutex
 	redirectReferences map[udpRedirectReference]uint32
+	redirectBurst      bool
 }
 
 const udpClientShardCount = 16
+
+// Keep small indexes warm; release burst-sized storage when completely idle.
+const udpIndexRetentionLimit = 1024
 
 var udpClientShardSeed = maphash.MakeSeed()
 
 type udpClientShard struct {
 	access  sync.RWMutex
 	clients map[netip.AddrPort]*udpClientState
+	burst   bool
 }
 
 type udpClientState struct {
@@ -103,6 +108,7 @@ func (s *udpClientShard) loadOrCreateLocked(client netip.AddrPort) *udpClientSta
 		originals: make(map[netip.Addr]udpOriginalDestination),
 	}
 	s.clients[client] = clientState
+	s.burst = s.burst || len(s.clients) >= udpIndexRetentionLimit
 	return clientState
 }
 
@@ -360,6 +366,10 @@ func (t *udpClientTable) deleteClient(client netip.AddrPort, expectedState *udpC
 		return nil
 	}
 	delete(shard.clients, client)
+	if shard.burst && len(shard.clients) == 0 {
+		shard.clients = nil
+		shard.burst = false
+	}
 
 	expectedState.access.Lock()
 	defer expectedState.access.Unlock()
@@ -386,6 +396,7 @@ func (t *udpClientTable) retainRedirectLocked(reference udpRedirectReference) {
 		t.redirectReferences = make(map[udpRedirectReference]uint32)
 	}
 	t.redirectReferences[reference]++
+	t.redirectBurst = t.redirectBurst || len(t.redirectReferences) >= udpIndexRetentionLimit
 }
 
 func (t *udpClientTable) releaseRedirectLocked(reference udpRedirectReference) bool {
@@ -396,6 +407,10 @@ func (t *udpClientTable) releaseRedirectLocked(reference udpRedirectReference) b
 	}
 	if references == 1 {
 		delete(t.redirectReferences, reference)
+		if t.redirectBurst && len(t.redirectReferences) == 0 {
+			t.redirectReferences = nil
+			t.redirectBurst = false
+		}
 		return true
 	}
 	return false
