@@ -567,8 +567,9 @@ func (r *NetworkManager) notifyInterfaceUpdate(_ *control.Interface, _ int) {
 func (r *NetworkManager) dispatchInterfaceUpdateLocked() {
 	defaultInterface := r.interfaceMonitor.DefaultInterface()
 	if defaultInterface == nil {
-		r.pauseManager.NetworkPause()
-		r.logger.Error("missing default interface")
+		// lx:begin android-optional-interface-monitor
+		r.handleMissingDefaultInterface(C.IsAndroid)
+		// lx:end android-optional-interface-monitor
 		return
 	}
 	r.pauseManager.NetworkWake()
