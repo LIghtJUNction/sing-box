@@ -148,6 +148,7 @@ DoD-чеклистом и статусом `C`.
 
 | # | Задача | Статус | Суть |
 |---|--------|--------|------|
+| **087** | ANDROID_OPTIONAL_INTERFACE_MONITOR | **I** | Необязательный Android CLI monitor не останавливает системные попытки; потеря отменяет старую обработку, восстановление сохраняет wake/reset. Host tests/race/vet и Android package build; device отдельно. [SPEC.md](TASKS/087-ANDROID_OPTIONAL_INTERFACE_MONITOR/SPEC.md) |
 | **001** | FORK_BOOTSTRAP | **C** | Remotes, ветка `lx`, `Makefile.lx`, версия `-lx` (ldflags), CI-скелет, `lx-test/config` — ✅ собрано/проверено |
 | **002** | XHTTP_CLIENT_TRANSPORT | **C** | ✅ **live-validated** против Xray (3x-ui): packet-up/auto работают (handshake+DNS+HTTPS+download); stream-one — был баг, **исправлен в 011** |
 | **003** | AWG2_CLIENT_ENDPOINT | **C** | ✅ **Функционален, проверен живым AWG2-сервером** (handshake+keepalive+трафик). merged-форк Leadaxe/wireguard-go (sagernet+обфускация) через submodule; S1–S4/H1–H4/I1–I5 |
