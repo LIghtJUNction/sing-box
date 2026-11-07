@@ -35,10 +35,19 @@ jobs:
         run: |-
           echo "version=${{ inputs.version }}"
           echo "version=${{ inputs.version }}" >> "$GITHUB_ENV"
-      - name: Calculate version
-        if: github.event_name != 'workflow_dispatch'
+      - name: Select published release version
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |-
-          go run -v ./cmd/internal/read_tag --ci --nightly
+          # lx: bind packages to the published tag, even when several tags share a commit.
+          version="${RELEASE_TAG#v}"
+          semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+          if [[ ! "$version" =~ $semver ]]; then
+            echo '::error::Published release tag must be a semantic version, optionally prefixed with v'
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_ENV"
       - name: Set outputs
         id: outputs
         run: |-
@@ -69,6 +78,13 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
           fetch-depth: 0
+      - name: Check package signing credentials
+        env:
+          GPG_KEY: ${{ secrets.GPG_KEY }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+        run: |
+          : "${GPG_KEY:?GPG_KEY is required to sign release packages}"
+          : "${GPG_KEY_ID:?GPG_KEY_ID is required to sign release packages}"
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -214,10 +230,12 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: binary-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.goarm && format('v{0}', matrix.goarm) }}${{ matrix.legacy_go && '-legacy' || '' }}
+          name: binary-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.goarm && format('v{0}', matrix.goarm) }}
           path: "dist"
   upload:
     name: Upload builds
+    # lx: this endpoint belongs to upstream; forks retain their build artifacts.
+    if: github.repository == 'SagerNet/sing-box'
     runs-on: ubuntu-latest
     needs:
       - calculate_version
@@ -238,6 +256,12 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Publish packages
-        if: github.event_name != 'push'
+        env:
+          FURY_TOKEN: ${{ secrets.FURY_TOKEN }}
         run: |-
-          ls dist | xargs -I {} curl -F "package=@dist/{}" https://${{ secrets.FURY_TOKEN }}@push.fury.io/sagernet/
+          set -euo pipefail
+          : "${FURY_TOKEN:?FURY_TOKEN is required to publish upstream Linux packages}"
+          for package in dist/*; do
+            curl --fail --silent --show-error --user "$FURY_TOKEN:" \
+              -F "package=@$package" https://push.fury.io/sagernet/
+          done

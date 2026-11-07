@@ -13,8 +13,8 @@ on:
       tag:
         description: "The tag version you want to build"
 
-env:
-  REGISTRY_IMAGE: ghcr.io/sagernet/sing-box
+permissions:
+  contents: read
 
 jobs:
   build_binary:
@@ -159,6 +159,9 @@ jobs:
           retention-days: 1
   build_docker:
     name: Build Docker image
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-latest
     needs:
       - build_binary
@@ -194,6 +197,8 @@ jobs:
           fetch-depth: 0
       - name: Prepare
         run: |
+          # lx: GHCR image names must be lowercase and belong to this repository.
+          echo "REGISTRY_IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
           platform=${{ matrix.platform }}
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
       - name: Download binary
@@ -246,6 +251,9 @@ jobs:
           retention-days: 1
   merge:
     if: github.event_name != 'push'
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-latest
     needs:
       - build_docker
@@ -265,6 +273,8 @@ jobs:
         with:
           ref: ${{ steps.ref.outputs.ref }}
           fetch-depth: 0
+      - name: Set repository registry
+        run: echo "REGISTRY_IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
       - name: Detect track
         run: bash .github/detect_track.sh
       - name: Download digests
