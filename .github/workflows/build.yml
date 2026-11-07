@@ -40,6 +40,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build }}
   cancel-in-progress: true
 
+# lx: fork pushes build unsigned CI artifacts; explicit releases still require signing.
+env:
+  SIGN_RELEASE: ${{ github.event_name == 'workflow_dispatch' || github.repository == 'SagerNet/sing-box' }}
+
 jobs:
   calculate_version:
     name: Calculate version
@@ -370,11 +374,22 @@ jobs:
             -p "dist/sing-box_${{ needs.calculate_version.outputs.version }}_${{ matrix.os }}_${{ matrix.debian }}.deb" \
             --architecture ${{ matrix.debian }} \
             dist/sing-box=/usr/bin/sing-box
+      - name: Sign DEB
+        if: matrix.debian != '' && env.SIGN_RELEASE == 'true'
+        env:
+          GPG_KEY: ${{ secrets.GPG_KEY }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          : "${GPG_KEY:?GPG_KEY is required to sign release packages}"
+          : "${GPG_KEY_ID:?GPG_KEY_ID is required to sign release packages}"
+          SIGNING_PASSPHRASE_FILE="$RUNNER_TEMP/package-signing-passphrase"
+          umask 077
+          printf '%s' "$GPG_PASSPHRASE" > "$SIGNING_PASSPHRASE_FILE"
           rm -rf $HOME/.gnupg
-          gpg --pinentry-mode loopback --passphrase "${{ secrets.GPG_PASSPHRASE }}" --import <<EOF
-          ${{ secrets.GPG_KEY }}
-          EOF
-          debsigs --sign=origin -k ${{ secrets.GPG_KEY_ID }} --gpgopts '--pinentry-mode loopback --passphrase "${{ secrets.GPG_PASSPHRASE }}"' dist/*.deb
+          printf '%s' "$GPG_KEY" | gpg --batch --pinentry-mode loopback --passphrase-file "$SIGNING_PASSPHRASE_FILE" --import
+          debsigs --sign=origin -k "$GPG_KEY_ID" --gpgopts "--batch --pinentry-mode loopback --passphrase-file $SIGNING_PASSPHRASE_FILE" dist/*.deb
       - name: Package RPM
         if: matrix.rpm != ''
         run: |-
@@ -387,13 +402,24 @@ jobs:
             -p "dist/sing-box_${{ needs.calculate_version.outputs.version }}_${{ matrix.os }}_${{ matrix.rpm }}.rpm" \
             --architecture ${{ matrix.rpm }} \
             dist/sing-box=/usr/bin/sing-box
+      - name: Sign RPM
+        if: matrix.rpm != '' && env.SIGN_RELEASE == 'true'
+        env:
+          GPG_KEY: ${{ secrets.GPG_KEY }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |-
+          set -euo pipefail
+          : "${GPG_KEY:?GPG_KEY is required to sign release packages}"
+          : "${GPG_KEY_ID:?GPG_KEY_ID is required to sign release packages}"
+          SIGNING_PASSPHRASE_FILE="$RUNNER_TEMP/package-signing-passphrase"
+          umask 077
+          printf '%s' "$GPG_PASSPHRASE" > "$SIGNING_PASSPHRASE_FILE"
           cat > $HOME/.rpmmacros <<EOF
-          %_gpg_name ${{ secrets.GPG_KEY_ID }}
-          %_gpg_sign_cmd_extra_args --pinentry-mode loopback --passphrase ${{ secrets.GPG_PASSPHRASE }}
+          %_gpg_name $GPG_KEY_ID
+          %_gpg_sign_cmd_extra_args --pinentry-mode loopback --passphrase-file $SIGNING_PASSPHRASE_FILE
           EOF
-          gpg --pinentry-mode loopback --passphrase "${{ secrets.GPG_PASSPHRASE }}" --import <<EOF
-          ${{ secrets.GPG_KEY }}
-          EOF
+          printf '%s' "$GPG_KEY" | gpg --batch --pinentry-mode loopback --passphrase-file "$SIGNING_PASSPHRASE_FILE" --import
           rpmsign --addsign dist/*.rpm
       - name: Package Pacman
         if: matrix.pacman != ''
@@ -469,7 +495,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: binary-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.goarm && format('v{0}', matrix.goarm) }}${{ matrix.go386 && format('_{0}', matrix.go386) }}${{ matrix.gomips && format('_{0}', matrix.gomips) }}${{ matrix.legacy_name && format('-legacy-{0}', matrix.legacy_name) }}${{ matrix.variant && format('-{0}', matrix.variant) }}
+          name: binary-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.goarm && format('v{0}', matrix.goarm) }}${{ matrix.go386 && format('_{0}', matrix.go386) }}${{ matrix.gomips && format('_{0}', matrix.gomips) }}${{ matrix.legacy_name && format('-legacy-{0}', matrix.legacy_name) }}${{ matrix.variant && format('-{0}', matrix.variant) }}${{ env.SIGN_RELEASE != 'true' && '-unsigned' || '' }}
           path: "dist"
   build_darwin:
     name: Build Darwin binaries
@@ -738,7 +764,8 @@ jobs:
           compression-level: 0
   build_android:
     name: Build Android (${{ matrix.variant }})
-    if: (github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Android') && github.ref != 'refs/heads/oldstable'
+    # lx: signed APKs need release credentials; Android binaries and libraries still build on fork pushes.
+    if: (github.event_name == 'workflow_dispatch' || github.repository == 'SagerNet/sing-box') && (github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Android') && github.ref != 'refs/heads/oldstable'
     runs-on: ubuntu-latest
     needs:
       - calculate_version
@@ -829,6 +856,7 @@ jobs:
           go run -v ./cmd/internal/update_android_version --ci --nightly
       - name: Build
         run: |-
+          : "${LOCAL_PROPERTIES:?LOCAL_PROPERTIES is required to sign Android release APKs}"
           mkdir -p clients/android/app/libs
           cp *.aar clients/android/app/libs
           cd clients/android
@@ -929,6 +957,7 @@ jobs:
           cache-provider: basic
       - name: Prepare build
         run: |-
+          : "${LOCAL_PROPERTIES:?LOCAL_PROPERTIES is required to sign Android releases for Google Play}"
           go run -v ./cmd/internal/update_android_version --ci
           mkdir -p clients/android/app/libs
           cp *.aar clients/android/app/libs
@@ -955,7 +984,8 @@ jobs:
           LOCAL_PROPERTIES: ${{ secrets.LOCAL_PROPERTIES }}
   build_windows_client:
     name: Build Windows client (${{ matrix.desktop_arch }})
-    if: (github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Windows') && github.ref != 'refs/heads/oldstable'
+    # lx: installers require a signing certificate; raw Windows binaries stay enabled.
+    if: (github.event_name == 'workflow_dispatch' || github.repository == 'SagerNet/sing-box') && (github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Windows') && github.ref != 'refs/heads/oldstable'
     runs-on: windows-latest
     needs:
       - calculate_version
@@ -1038,6 +1068,9 @@ jobs:
           go run -v ./cmd/internal/update_desktop_version --ci --nightly
       - name: Setup signing
         run: |-
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATES_P12)) {
+            throw "WINDOWS_CERTIFICATES_P12 is required to sign Windows release installers"
+          }
           $certificatePath = Join-Path $env:RUNNER_TEMP "windows-signing.p12"
           [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATES_P12))
           @{
@@ -1191,8 +1224,11 @@ jobs:
           GOARM: ${{ matrix.go_arm }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Setup package signing
+        if: env.SIGN_RELEASE == 'true'
         run: |-
           set -euo pipefail
+          : "${GPG_KEY:?GPG_KEY is required to sign Linux client release packages}"
+          : "${GPG_KEY_ID:?GPG_KEY_ID is required to sign Linux client release packages}"
           SIGNING_GNUPG_HOME="$RUNNER_TEMP/package-signing-gnupg"
           SIGNING_PASSPHRASE_FILE="$RUNNER_TEMP/package-signing-passphrase"
           mkdir -m 700 "$SIGNING_GNUPG_HOME"
@@ -1217,6 +1253,7 @@ jobs:
           GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
       - name: Sign Linux packages
+        if: env.SIGN_RELEASE == 'true'
         run: |-
           set -euo pipefail
           debsigs \
@@ -1240,7 +1277,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: binary-linux-client-${{ matrix.desktop_arch }}
+          name: binary-linux-client-${{ matrix.desktop_arch }}${{ env.SIGN_RELEASE != 'true' && '-unsigned' || '' }}
           path: 'dist'
   build_apple_library:
     name: Build Apple library (${{ matrix.artifact }})
@@ -1316,7 +1353,8 @@ jobs:
   build_apple:
     name: Build Apple release clients
     runs-on: ${{ matrix.if && 'xcode-27' || 'ubuntu-latest' }}
-    if: github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple-release' || inputs.build == 'macOS-standalone' || inputs.build == 'iOS-jailbreak'
+    # lx: signed clients need upstream credentials; Apple libraries and Darwin binaries stay enabled.
+    if: (github.event_name == 'workflow_dispatch' || github.repository == 'SagerNet/sing-box') && (github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple-release' || inputs.build == 'macOS-standalone' || inputs.build == 'iOS-jailbreak')
     needs:
       - calculate_version
       - build_apple_library
@@ -1411,6 +1449,8 @@ jobs:
       - name: Setup App Store Connect key
         if: matrix.if && matrix.type != 'jailbreak' && github.event_name == 'workflow_dispatch'
         run: |-
+          : "${ASC_KEY:?ASC_KEY is required for App Store Connect authentication}"
+          : "${ASC_KEY_ID:?ASC_KEY_ID is required for App Store Connect authentication}"
           # altool selects individual key authentication by the ApiKey_ file name prefix;
           # an AuthKey_ prefixed file is signed as a team key and rejected.
           ASC_PRIVATE_KEYS_DIR=$RUNNER_TEMP/private_keys
@@ -1426,6 +1466,7 @@ jobs:
       - name: Install Apple provisioning profiles
         if: matrix.if && matrix.type != 'jailbreak'
         run: |-
+          : "${PROVISIONING_PROFILES_1:?APPLE_PROVISIONING_PROFILES_1 is required for signed Apple clients}"
           PROFILES_ZIP_PATH=$RUNNER_TEMP/AppleProvisioningProfiles.zip
           for variable in $(compgen -v | grep -E '^PROVISIONING_PROFILES_[0-9]+$' | sort -t_ -k3 -n); do
             printf '%s' "${!variable}"
@@ -1453,6 +1494,7 @@ jobs:
       - name: Setup Apple Development certificate
         if: matrix.if && matrix.type != 'jailbreak'
         run: |-
+          : "${APPLE_DEVELOPMENT_CERTIFICATES_P12:?APPLE_DEVELOPMENT_CERTIFICATES_P12 is required to sign Apple clients}"
           CERTIFICATE_PATH=$RUNNER_TEMP/AppleDevelopment.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/apple-development.keychain-db
           echo -n "$APPLE_DEVELOPMENT_CERTIFICATES_P12" | base64 --decode -o $CERTIFICATE_PATH
@@ -1472,6 +1514,7 @@ jobs:
       - name: Setup Developer ID certificates
         if: matrix.if && matrix.type == 'standalone'
         run: |-
+          : "${DEVELOPER_ID_CERTIFICATES_P12:?DEVELOPER_ID_CERTIFICATES_P12 is required to sign macOS releases}"
           CERTIFICATE_PATH=$RUNNER_TEMP/DeveloperIDCertificates.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/developer-id.keychain-db
           echo -n "$DEVELOPER_ID_CERTIFICATES_P12" | base64 --decode -o $CERTIFICATE_PATH
@@ -1491,6 +1534,7 @@ jobs:
       - name: Setup Apple Distribution certificate
         if: matrix.if && matrix.type == 'app-store'
         run: |-
+          : "${APPLE_DISTRIBUTION_CERTIFICATES_P12:?APPLE_DISTRIBUTION_CERTIFICATES_P12 is required for App Store releases}"
           CERTIFICATE_PATH=$RUNNER_TEMP/AppleDistributionCertificates.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/apple-distribution.keychain-db
           echo -n "$APPLE_DISTRIBUTION_CERTIFICATES_P12" | base64 --decode -o $CERTIFICATE_PATH
@@ -1694,7 +1738,7 @@ jobs:
     steps: *build_apple_steps
   upload:
     name: Upload builds
-    if: "!failure() && github.event_name == 'workflow_dispatch' && (inputs.build == 'All' || inputs.build == 'Binary' || inputs.build == 'Android' || inputs.build == 'Windows' || inputs.build == 'Linux' || inputs.build == 'Apple-release' || inputs.build == 'macOS-standalone' || inputs.build == 'iOS-jailbreak')"
+    if: "!failure() && !cancelled() && github.event_name == 'workflow_dispatch' && (inputs.build == 'All' || inputs.build == 'Binary' || inputs.build == 'Android' || inputs.build == 'Windows' || inputs.build == 'Linux' || inputs.build == 'Apple-release' || inputs.build == 'macOS-standalone' || inputs.build == 'iOS-jailbreak')"
     runs-on: ubuntu-latest
     permissions:
       contents: write

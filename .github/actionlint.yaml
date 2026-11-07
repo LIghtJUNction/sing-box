@@ -1,0 +1,6 @@
+# lx: GitHub supports this image; actionlint 1.7.12 predates its label catalog.
+# This extends the known labels without suppressing any runner-label checks.
+# https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04

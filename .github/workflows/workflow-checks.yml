@@ -1,0 +1,30 @@
+name: Validate workflows
+
+on:
+  push:
+    branches: [oldstable, stable, testing, unstable]
+    paths:
+      - '.github/**'
+  pull_request:
+    branches: [oldstable, stable, testing, unstable]
+    paths:
+      - '.github/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workflow-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          persist-credentials: false
+      - name: Validate all GitHub Actions workflows
+        run: bash .github/check-workflows.sh
