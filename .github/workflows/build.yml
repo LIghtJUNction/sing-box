@@ -1757,6 +1757,53 @@ jobs:
       - build_apple_library
       - build_apple
     steps:
+      - name: Require all selected builds to succeed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          BUILD_TYPE: ${{ inputs.build }}
+          BUILD_REF: ${{ github.ref }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          build_type = os.environ['BUILD_TYPE']
+          oldstable = os.environ['BUILD_REF'] == 'refs/heads/oldstable'
+          binary = build_type in ('All', 'Binary')
+          android = build_type in ('All', 'Android') and not oldstable
+          windows = build_type in ('All', 'Windows') and not oldstable
+          linux = build_type in ('All', 'Linux') and not oldstable
+          apple = build_type in ('All', 'Apple-release', 'macOS-standalone', 'iOS-jailbreak')
+          if build_type not in ('All', 'Binary', 'Android', 'Windows', 'Linux', 'Apple-release', 'macOS-standalone', 'iOS-jailbreak'):
+              sys.exit('Unsupported release build selection')
+          if oldstable and build_type in ('Android', 'Windows', 'Linux'):
+              sys.exit('The selected client has no builds on oldstable; refusing an empty release')
+          required = {
+              'calculate_version': True,
+              'build': binary,
+              'build_darwin': binary,
+              'build_windows': binary,
+              'build_android_library': android,
+              'build_android': android,
+              'build_windows_client': windows,
+              'build_linux_client': linux,
+              'build_apple_library': apple,
+              'build_apple': apple,
+          }
+          needs = json.loads(os.environ['NEEDS_JSON'])
+          if set(needs) != set(required):
+              sys.exit('Release job dependencies do not match the validated build plan')
+          errors = []
+          for job, selected in required.items():
+              expected = 'success' if selected else 'skipped'
+              actual = needs[job].get('result')
+              if actual != expected:
+                  errors.append(f'{job}: expected {expected}, got {actual}')
+          if errors:
+              sys.exit('Refusing to publish incomplete builds: ' + '; '.join(errors))
+          print(f'All selected {build_type} builds succeeded; unselected jobs were skipped')
+          PY
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
