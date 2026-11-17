@@ -222,6 +222,11 @@ func groupContains(outboundManager adapter.OutboundManager, outboundGroup adapte
 
 func getProxyDelay(server *Server) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// lx:begin strict_http_probe
+		if serveHTTP204Probe(server, w, r) {
+			return
+		}
+		// lx:end strict_http_probe
 		query := r.URL.Query()
 		url := query.Get("url")
 		if strings.HasPrefix(url, "http://") {
