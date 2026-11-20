@@ -29,12 +29,14 @@ icon: material/alert-decagram
     "strategy": "",
     "disable_cache": false,
     "disable_expire": false,
+    // Deprecated
     "independent_cache": false,
     "cache_capacity": 0,
     "optimistic": false, // or {}
     "timeout": "",
     "reverse_mapping": false,
     "client_subnet": "",
+    // Deprecated
     "fakeip": {}
   }
 }
