@@ -4,7 +4,6 @@ import (
 	"context"
 	"net"
 	"net/netip"
-	"slices"
 	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -29,12 +28,10 @@ func RegisterEndpoint(registry *endpoint.Registry) {
 
 type endpointBase struct {
 	endpoint.Adapter
-	router adapter.Router
-	logger log.ContextLogger
-}
-
-func (e *endpointBase) SupportsFlow(network string) bool {
-	return slices.Contains(e.Network(), network)
+	router  adapter.Router
+	logger  log.ContextLogger
+	system  bool
+	network adapter.NetworkManager
 }
 
 func (e *endpointBase) newConnection(ctx context.Context, endpoint adapter.Endpoint, localAddresses []netip.Prefix, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
@@ -96,13 +93,16 @@ func loopbackAddressFor(address netip.Addr) netip.Addr {
 	return netip.IPv6Loopback()
 }
 
-func judgeOpenConnectFlow(router adapter.Router, tag string, endpointType string, localAddresses []netip.Prefix, network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
+func (e *endpointBase) judgeFlow(ctx context.Context, endpoint adapter.Endpoint, localAddresses []netip.Prefix, network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
 	for _, localPrefix := range localAddresses {
 		if destination.Addr() == localPrefix.Addr() {
-			return tun.FlowVerdict{Action: tun.ActionAccept}
+			if e.system {
+				return tun.FlowVerdict{Action: tun.ActionAccept}
+			}
+			return adapter.JudgeHostFlow(ctx, e.network, e.logger, network, source, destination)
 		}
 	}
-	return adapter.JudgeFlow(router, tag, endpointType, network, source, destination, firstPacket)
+	return adapter.JudgeFlow(e.router, adapter.InboundContext{Inbound: endpoint.Tag(), InboundType: endpoint.Type()}, network, source, destination, firstPacket)
 }
 
 func materialSource(name string, inlineValues []string, path string) (openconnect.Material, error) {

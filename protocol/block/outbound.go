@@ -10,6 +10,7 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	R "github.com/sagernet/sing-box/route/rule"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -33,10 +34,10 @@ func New(ctx context.Context, router adapter.Router, logger log.ContextLogger, t
 
 func (h *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	h.logger.InfoContext(ctx, "blocked connection to ", destination)
-	return nil, syscall.EPERM
+	return nil, &R.RejectedError{Cause: syscall.EPERM}
 }
 
 func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	h.logger.InfoContext(ctx, "blocked packet connection to ", destination)
-	return nil, syscall.EPERM
+	return nil, &R.RejectedError{Cause: syscall.EPERM}
 }

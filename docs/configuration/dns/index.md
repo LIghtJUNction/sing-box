@@ -29,12 +29,14 @@ icon: material/alert-decagram
     "strategy": "",
     "disable_cache": false,
     "disable_expire": false,
+    // Deprecated
     "independent_cache": false,
     "cache_capacity": 0,
     "optimistic": false, // or {}
     "timeout": "",
     "reverse_mapping": false,
     "client_subnet": "",
+    // Deprecated
     "fakeip": {}
   }
 }
@@ -77,7 +79,7 @@ Conflict with `optimistic`.
 
 !!! failure "Deprecated in sing-box 1.14.0"
 
-    `independent_cache` is deprecated and will be removed in sing-box 1.14.0, check [Migration](/migration/#migrate-independent-dns-cache).
+    `independent_cache` is deprecated and will be removed in sing-box 1.16.0, check [Migration](/migration/#migrate-independent-dns-cache).
 
 Make each DNS server's cache independent for special purposes. If enabled, will slightly degrade performance.
 

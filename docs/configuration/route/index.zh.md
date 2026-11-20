@@ -82,7 +82,7 @@ icon: material/alert-decagram
 
 !!! quote ""
 
-    仅支持 Linux、Windows 和 macOS。
+    支持 Linux、Windows、macOS 和 Android 图形客户端。
 
 默认将出站连接绑定到默认网卡，以防止在 tun 下出现路由环路。
 

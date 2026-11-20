@@ -1,28 +1,38 @@
 package trafficcontrol
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/sagernet/sing-box/adapter"
+)
 
 type legacyTraceGroup struct{}
 
-func (legacyTraceGroup) Now() string { return "manual-node" }
+type traceNode struct {
+	adapter.Outbound
+	tag string
+}
 
-type splitTraceGroup struct{ legacyTraceGroup }
+func (n *traceNode) Tag() string                          { return n.tag }
+func (legacyTraceGroup) Selected(string) adapter.Outbound { return &traceNode{tag: "manual-node"} }
 
-func (splitTraceGroup) NowForNetwork(network string) string {
+type splitTraceGroup struct{}
+
+func (splitTraceGroup) Selected(network string) adapter.Outbound {
 	switch network {
 	case "tcp":
-		return "tcp-node"
+		return &traceNode{tag: "tcp-node"}
 	case "udp":
-		return "udp-node"
+		return &traceNode{tag: "udp-node"}
 	default:
-		return ""
+		return nil
 	}
 }
 
 func TestGroupTagForNetwork(t *testing.T) {
 	for _, test := range []struct {
 		name    string
-		group   interface{ Now() string }
+		group   interface{ Selected(string) adapter.Outbound }
 		network string
 		want    string
 	}{

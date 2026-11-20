@@ -50,9 +50,7 @@ func socketDiagPoolFixture(tb testing.TB, family, protocol uint8, delay time.Dur
 				}
 			}
 		}
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			var request [sizeOfSocketDiagRequest]byte
 			for {
 				n, err := readSocketDiag(fds[1], request[:])
@@ -72,7 +70,7 @@ func socketDiagPoolFixture(tb testing.TB, family, protocol uint8, delay time.Dur
 					return
 				}
 			}
-		}()
+		})
 	}
 	return pool
 }

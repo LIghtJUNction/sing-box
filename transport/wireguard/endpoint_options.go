@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/sagernet/sing-box/option" // lx: awg — option.AmneziaWGOptions
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/control"
 	"github.com/sagernet/sing/common/logger"
@@ -36,6 +37,12 @@ type EndpointOptions struct {
 	ResolvePeer       func(domain string) ([]netip.Addr, error)
 	Peers             []PeerOptions
 	Workers           int
+	// lx:begin awg
+	// AmneziaWG 2.0 obfuscation parameters, carried from the endpoint options.
+	// Consumed only under the `with_awg` build tag (see device_awg.go); with the
+	// tag off, a non-empty value is rejected by device_stub_awg.go.
+	AmneziaWG option.AmneziaWGOptions
+	// lx:end awg
 }
 
 type PeerOptions struct {
@@ -43,6 +50,6 @@ type PeerOptions struct {
 	PublicKey                   string
 	PreSharedKey                string
 	AllowedIPs                  []netip.Prefix
-	PersistentKeepaliveInterval uint16
+	PersistentKeepaliveInterval option.AWGRange // lx: awg — "N" or "min-max" (AWG 3.x), see option.WireGuardPeer
 	Reserved                    []uint8
 }

@@ -8,9 +8,7 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
-	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
-	"github.com/sagernet/sing/service"
 
 	"github.com/miekg/dns"
 )
@@ -23,6 +21,12 @@ type DNSRouter interface {
 	ClearCache()
 	LookupReverseMapping(ip netip.Addr) (string, bool)
 	ResetNetwork()
+	// lx:begin lx_command
+	// Rules returns the live DNS rule table, mirroring Router.Rules() for route
+	// rules. Added for the SPEC 014 GetRules command RPC (CONSTITUTION §3.6);
+	// upstream exposes no DNS-rule getter. Implemented by dns.Router.
+	Rules() []DNSRule
+	// lx:end lx_command
 }
 
 type DNSClient interface {
@@ -45,26 +49,6 @@ type DNSQueryOptions struct {
 	RemoveClientSubnet     bool
 }
 
-func DNSQueryOptionsFrom(ctx context.Context, options *option.DomainResolveOptions) (DNSQueryOptions, error) {
-	if options == nil || options.Server == "" {
-		return DNSQueryOptions{}, nil
-	}
-	transportManager := service.FromContext[DNSTransportManager](ctx)
-	transport, loaded := transportManager.Transport(options.Server)
-	if !loaded {
-		return DNSQueryOptions{}, E.New("domain resolver not found: " + options.Server)
-	}
-	return DNSQueryOptions{
-		Transport:              transport,
-		Strategy:               C.DomainStrategy(options.Strategy),
-		DisableCache:           options.DisableCache,
-		DisableOptimisticCache: options.DisableOptimisticCache,
-		RewriteTTL:             options.RewriteTTL,
-		Timeout:                time.Duration(options.Timeout),
-		ClientSubnet:           options.ClientSubnet.Build(netip.Prefix{}),
-	}, nil
-}
-
 type RDRCStore interface {
 	LoadRDRC(transportName string, qName string, qType uint16) (rejected bool)
 	SaveRDRC(transportName string, qName string, qType uint16) error
@@ -83,6 +67,8 @@ type DNSTransport interface {
 	Type() string
 	Tag() string
 	Dependencies() []string
+	// OutboundTag is the detour tag this DNS server is bound to (lx: SPEC 018); "" = default.
+	OutboundTag() string
 	// Reset closes the transport's existing connections so later requests use fresh connections.
 	// Exchanges that are currently using those connections may fail.
 	Reset()
@@ -93,6 +79,12 @@ type DNSTransport interface {
 type DNSTransportWithPreferredDomain interface {
 	DNSTransport
 	PreferredDomain(domain string) bool
+}
+
+type DNSTransportWithConfiguration interface {
+	DNSTransport
+	ServerAddresses() []netip.Addr
+	SearchDomains() []string
 }
 
 type DNSTransportWithEnvironment interface {
@@ -111,6 +103,5 @@ type DNSTransportManager interface {
 	Transport(tag string) (DNSTransport, bool)
 	Default() DNSTransport
 	FakeIP() FakeIPTransport
-	Remove(tag string) error
 	Create(ctx context.Context, logger log.ContextLogger, tag string, outboundType string, options any) error
 }

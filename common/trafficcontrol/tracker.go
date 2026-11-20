@@ -3,6 +3,7 @@ package trafficcontrol
 import (
 	"context"
 	"net"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -16,13 +17,21 @@ import (
 )
 
 type TrackerMetadata struct {
-	ID           uuid.UUID
-	Metadata     adapter.InboundContext
-	CreatedAt    time.Time
-	ClosedAt     time.Time
-	Upload       *atomic.Int64
-	Download     *atomic.Int64
-	Chain        []string
+	ID        uuid.UUID
+	Metadata  adapter.InboundContext
+	CreatedAt time.Time
+	ClosedAt  time.Time
+	Upload    *atomic.Int64
+	Download  *atomic.Int64
+	Chain     []string
+	// lx:begin detour-chain (SPEC 017)
+	// Detour carries the transport detour tail of the final outbound — the part the
+	// upstream Chain omits by design (Chain = routing groups + final outbound only).
+	// Resolved in newTrackerMetadata against the same atomic group snapshot, so a
+	// detour that points at a group reflects that group's network-specific selection. Order is from
+	// the final outbound outward (node → its detour → …).
+	Detour []string
+	// lx:end detour-chain
 	Rule         adapter.Rule
 	Outbound     string
 	OutboundType string
@@ -66,40 +75,75 @@ func (m *Manager) RoutedFlow(ctx context.Context, metadata adapter.InboundContex
 
 func (m *Manager) newTrackerMetadata(metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound, upload *atomic.Int64, download *atomic.Int64) TrackerMetadata {
 	id, _ := uuid.NewV4()
-	var (
-		chain        []string
-		next         string
-		outbound     string
-		outboundType string
-	)
-	if matchOutbound != nil {
-		next = matchOutbound.Tag()
-	} else {
-		next = m.outbound.Default().Tag()
+	chain := common.Map(metadata.OutboundChain, adapter.Outbound.Tag)
+	slices.Reverse(chain)
+	var finalOutbound adapter.Outbound
+	if len(metadata.OutboundChain) > 0 {
+		finalOutbound = metadata.OutboundChain[len(metadata.OutboundChain)-1]
+	} else if matchOutbound != nil {
+		// Compatibility callers may not have a route-owned chain.
+		finalOutbound = matchOutbound
 	}
-	for {
-		detour, loaded := m.outbound.Outbound(next)
+	var outboundTag, outboundType string
+	if finalOutbound != nil {
+		outboundTag, outboundType = finalOutbound.Tag(), finalOutbound.Type()
+	}
+	seen := make(map[string]bool, len(chain))
+	for _, tag := range chain {
+		seen[tag] = true
+	}
+	// lx:begin detour-chain (SPEC 017)
+	// Walk the detour tail of the final outbound. Dependencies()[0] of a non-group
+	// outbound is exactly its detour (adapter/outbound/adapter.go); a detour that
+	// points at a group uses Selected(metadata.Network). seen
+	// guards against detour cycles. Order: final outbound → outward.
+	var detourChain []string
+	// lx:begin chain
+	// SPEC 073: финальный outbound-цепочка отдаёт разрешённый путь сам (по
+	// позициям, вход первым); Dependencies()[0] у неё — вход, а не detour.
+	if pathProvider, isChain := finalOutbound.(adapter.ChainPathProvider); isChain {
+		detourChain = common.Reverse(pathProvider.ChainPath())
+		finalOutbound = nil
+	}
+	// lx:end chain
+	for cur := finalOutbound; cur != nil && m.outbound != nil; {
+		deps := cur.Dependencies()
+		if len(deps) == 0 || seen[deps[0]] {
+			break
+		}
+		step, loaded := m.outbound.Outbound(deps[0])
 		if !loaded {
 			break
 		}
-		chain = append(chain, next)
-		outbound = detour.Tag()
-		outboundType = detour.Type()
-		outboundGroup, isGroup := detour.(adapter.OutboundGroup)
-		if !isGroup {
-			break
+		detourChain = append(detourChain, deps[0])
+		seen[deps[0]] = true
+		if group, isGroup := step.(adapter.OutboundGroup); isGroup {
+			now := groupTagForNetwork(group, metadata.Network)
+			if now == "" || seen[now] {
+				break
+			}
+			nowOutbound, loaded := m.outbound.Outbound(now)
+			if !loaded {
+				break
+			}
+			detourChain = append(detourChain, now)
+			seen[now] = true
+			cur = nowOutbound
+			continue
 		}
-		next = groupTagForNetwork(outboundGroup, metadata.Network)
+		cur = step
 	}
+	// lx:end detour-chain
 	return TrackerMetadata{
 		ID:           id,
 		Metadata:     metadata,
 		CreatedAt:    time.Now(),
 		Upload:       upload,
 		Download:     download,
-		Chain:        common.Reverse(chain),
+		Chain:        chain,
+		Detour:       detourChain,
 		Rule:         matchedRule,
-		Outbound:     outbound,
+		Outbound:     outboundTag,
 		OutboundType: outboundType,
 	}
 }

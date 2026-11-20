@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,7 +18,9 @@ import (
 	"github.com/sagernet/sing-box/common/sniff"
 	"github.com/sagernet/sing-box/common/tlsfragment"
 	"github.com/sagernet/sing-box/common/tlsspoof"
+	"github.com/sagernet/sing-box/common/urltest"
 	C "github.com/sagernet/sing-box/constant"
+	R "github.com/sagernet/sing-box/route/rule"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/buf"
@@ -28,23 +31,42 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/x/list"
+	"github.com/sagernet/sing/service"
 )
 
 var _ adapter.ConnectionManager = (*ConnectionManager)(nil)
 
 type ConnectionManager struct {
-	logger      logger.ContextLogger
-	access      sync.Mutex
-	connections list.List[io.Closer]
+	logger         logger.ContextLogger
+	urlTestHistory *urltest.HistoryStorage
+	access         sync.Mutex
+	connections    list.List[io.Closer]
 }
 
-func NewConnectionManager(logger logger.ContextLogger) *ConnectionManager {
+func NewConnectionManager(ctx context.Context, logger logger.ContextLogger) *ConnectionManager {
 	return &ConnectionManager{
-		logger: logger,
+		logger:         logger,
+		urlTestHistory: service.PtrFromContext[urltest.HistoryStorage](ctx),
 	}
 }
 
-func (m *ConnectionManager) Start(stage adapter.StartStage) error {
+func (m *ConnectionManager) logDialError(ctx context.Context, err error) {
+	// A policy rejection is expected; real socket permission failures remain errors.
+	if R.IsRejected(err) {
+		m.logger.DebugContext(ctx, err)
+	} else {
+		m.logger.ErrorContext(ctx, err)
+	}
+}
+
+func (m *ConnectionManager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage != adapter.StartStateInitialize {
+		return nil
+	}
+	scope.Add(func() error {
+		m.CloseAll()
+		return nil
+	})
 	return nil
 }
 
@@ -69,15 +91,11 @@ func (m *ConnectionManager) CloseAll() {
 	}
 }
 
-func (m *ConnectionManager) Close() error {
-	m.CloseAll()
-	return nil
-}
-
 func (m *ConnectionManager) TrackConn(conn net.Conn) net.Conn {
 	tracked := &trackedConn{
-		Conn:    conn,
-		manager: m,
+		Conn:        conn,
+		socketOwner: socketOwner{original: conn},
+		manager:     m,
 	}
 	m.access.Lock()
 	tracked.element = m.connections.PushBack(tracked)
@@ -88,6 +106,7 @@ func (m *ConnectionManager) TrackConn(conn net.Conn) net.Conn {
 func (m *ConnectionManager) TrackPacketConn(conn net.PacketConn) net.PacketConn {
 	tracked := &trackedPacketConn{
 		NetPacketConn: bufio.NewPacketConn(conn),
+		socketOwner:   socketOwner{original: conn},
 		manager:       m,
 	}
 	m.access.Lock()
@@ -109,13 +128,18 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 	}
 	if err != nil && !metadata.Destination.IsIP() &&
 		metadata.RouteOriginalDestination.IsValid() && metadata.RouteOriginalDestination != metadata.Destination {
-		// MagicNet: the sniffed domain could not be used, for example because the
-		// upstream cannot resolve it. Retry once with the original destination so
-		// the connection still works the way it did before the domain override.
+		// Retry the original destination with the same network selection policy.
+		// Resolved addresses belong to the overridden domain and must not be reused.
 		var fallbackErr error
-		remoteConn, fallbackErr = this.DialContext(ctx, N.NetworkTCP, metadata.RouteOriginalDestination)
+		if metadata.RouteOriginalDestination.IsIP() {
+			remoteConn, fallbackErr = dialer.DialSerialNetwork(ctx, this, N.NetworkTCP, metadata.RouteOriginalDestination, nil, metadata.NetworkStrategy, metadata.NetworkType, metadata.FallbackNetworkType, metadata.FallbackDelay)
+		} else {
+			remoteConn, fallbackErr = this.DialContext(ctx, N.NetworkTCP, metadata.RouteOriginalDestination)
+		}
 		if fallbackErr == nil {
 			err = nil
+		} else {
+			err = E.Errors(err, E.Cause(fallbackErr, "fallback to ", metadata.RouteOriginalDestination))
 		}
 	}
 	if err != nil {
@@ -130,8 +154,9 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 			dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
 		}
 		err = E.Cause(err, "open connection to ", remoteString, dialerString)
+		m.deleteURLTestHistory(metadata.OutboundChain)
 		N.CloseOnHandshakeFailure(conn, onClose, err)
-		m.logger.ErrorContext(ctx, err)
+		m.logDialError(ctx, err)
 		return
 	}
 	err = N.ReportConnHandshakeSuccess(conn, remoteConn)
@@ -218,8 +243,9 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 				dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
 			}
 			err = E.Cause(err, "open packet connection to ", remoteString, dialerString)
+			m.deleteURLTestHistory(metadata.OutboundChain)
 			N.CloseOnHandshakeFailure(conn, onClose, err)
-			m.logger.ErrorContext(ctx, err)
+			m.logDialError(ctx, err)
 			return
 		}
 		remotePacketConn = bufio.NewUnbindPacketConn(remoteConn)
@@ -241,16 +267,18 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 				dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
 			}
 			err = E.Cause(err, "listen packet connection using ", dialerString)
+			m.deleteURLTestHistory(metadata.OutboundChain)
 			N.CloseOnHandshakeFailure(conn, onClose, err)
-			m.logger.ErrorContext(ctx, err)
+			m.logDialError(ctx, err)
 			return
 		}
 	}
 	err = N.ReportPacketConnHandshakeSuccess(conn, remotePacketConn)
 	if err != nil {
-		conn.Close()
+		err = E.Cause(err, "report handshake success")
 		remotePacketConn.Close()
-		m.logger.ErrorContext(ctx, "report handshake success: ", err)
+		N.CloseOnHandshakeFailure(conn, onClose, err)
+		m.logger.ErrorContext(ctx, err)
 		return
 	}
 	udpTimeout := packetTimeout(&metadata)
@@ -298,17 +326,30 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 	go m.packetConnectionCopy(ctx, destination, conn, true, &done, onClose)
 }
 
+func (m *ConnectionManager) deleteURLTestHistory(chain []adapter.Outbound) {
+	if slices.ContainsFunc(chain, func(it adapter.Outbound) bool {
+		_, isURLTestGroup := it.(adapter.URLTestGroup)
+		return isURLTestGroup
+	}) {
+		m.urlTestHistory.DeleteURLTestHistory(chain[len(chain)-1].Tag())
+	}
+}
+
 func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn, destination net.Conn, direction bool, done *atomic.Bool, onClose N.CloseHandlerFunc) {
 	_, err := bufio.CopyWithIncreateBuffer(destination, source, bufio.DefaultIncreaseBufferAfter, bufio.DefaultBatchSize)
 	if err != nil {
 		common.Close(source, destination)
-	} else if duplexDst, isDuplex := destination.(N.WriteCloser); isDuplex {
-		err = duplexDst.CloseWrite()
-		if err != nil {
-			common.Close(source, destination)
-		}
 	} else {
-		destination.Close()
+		destinationWriter, _ := N.UnwrapCountWriter(destination, nil)
+		duplexDst, isDuplex := N.UnwrapWriter(destinationWriter).(N.WriteCloser)
+		if isDuplex {
+			err = duplexDst.CloseWrite()
+			if err != nil {
+				common.Close(source, destination)
+			}
+		} else {
+			destination.Close()
+		}
 	}
 	if done.Swap(true) {
 		if onClose != nil {
@@ -421,25 +462,27 @@ func (m *ConnectionManager) packetConnectionCopy(ctx context.Context, source N.P
 }
 
 type socketOwner struct {
-	access sync.Mutex
-	owner  io.Closer
-	closed bool
+	access   sync.Mutex
+	original io.Closer
+	owner    io.Closer
+	closed   bool
 }
 
-func (o *socketOwner) Attach(closer io.Closer) bool {
+func (o *socketOwner) Attach(closer io.Closer) (io.Closer, bool) {
 	o.access.Lock()
 	defer o.access.Unlock()
-	if o.closed {
-		return false
+	if o.closed || o.owner != nil {
+		return nil, false
 	}
 	o.owner = closer
-	return true
+	return o.original, true
 }
 
-func (o *socketOwner) Detach() {
+func (o *socketOwner) detach() bool {
 	o.access.Lock()
+	defer o.access.Unlock()
 	o.owner = nil
-	o.access.Unlock()
+	return o.closed
 }
 
 func (o *socketOwner) close() bool {
@@ -467,6 +510,12 @@ func (c *trackedConn) SyscallConn() (syscall.RawConn, error) {
 		return nil, os.ErrInvalid
 	}
 	return syscallConn.SyscallConn()
+}
+
+func (c *trackedConn) Detach() {
+	if c.socketOwner.detach() {
+		c.Conn.Close()
+	}
 }
 
 func (c *trackedConn) Close() error {
@@ -504,6 +553,12 @@ func (c *trackedPacketConn) SyscallConn() (syscall.RawConn, error) {
 		return nil, os.ErrInvalid
 	}
 	return syscallConn.SyscallConn()
+}
+
+func (c *trackedPacketConn) Detach() {
+	if c.socketOwner.detach() {
+		c.NetPacketConn.Close()
+	}
 }
 
 func (c *trackedPacketConn) Close() error {

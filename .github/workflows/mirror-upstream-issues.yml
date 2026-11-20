@@ -1,0 +1,250 @@
+name: Mirror upstream issues
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: mirror-upstream-issues
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Mirror SagerNet/sing-box issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REPO: SagerNet/sing-box
+          DEST_REPO: ${{ github.repository }}
+          WRITE_BUDGET: "400"
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          API = "https://api.github.com"
+          TOKEN = os.environ["GH_TOKEN"]
+          SOURCE = os.environ["SOURCE_REPO"]
+          DEST = os.environ["DEST_REPO"]
+          budget = int(os.environ.get("WRITE_BUDGET", "400"))
+          writes = 0
+
+          class StopForLimit(Exception):
+              pass
+
+          class StopForBudget(Exception):
+              pass
+
+          def request(method, path, payload=None, retry=True):
+              url = path if path.startswith("http") else API + path
+              data = None if payload is None else json.dumps(payload).encode("utf-8")
+              headers = {
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {TOKEN}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "sing-box-upstream-issue-mirror",
+              }
+              req = urllib.request.Request(url, data=data, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as resp:
+                      raw = resp.read()
+                      return json.loads(raw) if raw else None
+              except urllib.error.HTTPError as e:
+                  raw = e.read().decode("utf-8", "replace")
+                  if e.code in (403, 429):
+                      retry_after = e.headers.get("Retry-After")
+                      if retry and retry_after:
+                          delay = min(int(retry_after) + 2, 120)
+                          print(f"Rate limited; retrying after {delay}s")
+                          time.sleep(delay)
+                          return request(method, path, payload, retry=False)
+                      print(f"Rate limit reached ({e.code}); next scheduled run will resume: {raw[:500]}")
+                      raise StopForLimit
+                  raise RuntimeError(f"GitHub API {method} {url} failed: {e.code} {raw[:1000]}") from e
+
+          def paged(path, params=None):
+              page = 1
+              params = dict(params or {})
+              params["per_page"] = 100
+              while True:
+                  params["page"] = page
+                  query = urllib.parse.urlencode(params)
+                  items = request("GET", f"{path}?{query}")
+                  if not items:
+                      break
+                  yield from items
+                  if len(items) < 100:
+                      break
+                  page += 1
+
+          def write(method, path, payload):
+              global writes
+              if writes >= budget:
+                  raise StopForBudget
+              result = request(method, path, payload)
+              writes += 1
+              # Keep well below GitHub's documented content-creation secondary limit.
+              time.sleep(1.1)
+              return result
+
+          def neutralize_mentions(text):
+              # Avoid notifying thousands of upstream users from copied @mentions.
+              return re.sub(r"(?<![A-Za-z0-9._%+\-])@(?=[A-Za-z0-9])", "@\u200b", text or "")
+
+          def issue_body(src):
+              number = src["number"]
+              author = (src.get("user") or {}).get("login", "unknown")
+              labels = [x["name"] for x in src.get("labels", [])]
+              assignees = [(x or {}).get("login") for x in src.get("assignees", []) if (x or {}).get("login")]
+              milestone = (src.get("milestone") or {}).get("title")
+              meta = [
+                  f"<!-- upstream-issue: {SOURCE}#{number} -->",
+                  f"<!-- upstream-updated: {src.get('updated_at', '')} -->",
+                  "> [!NOTE]",
+                  f"> Automated mirror of [{SOURCE}#{number}]({src['html_url']}).",
+                  f"> Original author: [{author}](https://github.com/{author})",
+                  f"> Upstream state: `{src.get('state', 'open')}`",
+                  f"> Created upstream: `{src.get('created_at', '')}` · Updated upstream: `{src.get('updated_at', '')}`",
+                  f"> Upstream comments: `{src.get('comments', 0)}`",
+              ]
+              if labels:
+                  meta.append("> Upstream labels: " + ", ".join(f"`{x}`" for x in labels))
+              if assignees:
+                  meta.append("> Upstream assignees: " + ", ".join(f"`{x}`" for x in assignees))
+              if milestone:
+                  meta.append(f"> Upstream milestone: `{milestone}`")
+              meta.extend(["", "---", ""])
+              header = "\n".join(meta)
+              original = neutralize_mentions(src.get("body") or "_No description provided upstream._")
+              max_len = 65000
+              room = max_len - len(header) - 180
+              if len(original) > room:
+                  original = original[:max(0, room)] + f"\n\n> Body truncated in mirror. Read the complete text at {src['html_url']}"
+              return header + original
+
+          marker_re = re.compile(r"<!-- upstream-issue: " + re.escape(SOURCE) + r"#(\d+) -->")
+          updated_re = re.compile(r"<!-- upstream-updated: ([^ ]+) -->")
+
+          dest_meta = request("GET", f"/repos/{DEST}")
+          if not dest_meta.get("has_issues"):
+              print(f"Issues are disabled in {DEST}; skipping without error. Enable Issues in repository settings, then dispatch this workflow or let the schedule run.")
+              sys.exit(0)
+
+          print("Loading upstream issues...")
+          upstream = [x for x in paged(f"/repos/{SOURCE}/issues", {"state": "all", "sort": "created", "direction": "desc"}) if "pull_request" not in x]
+          print(f"Upstream issues: {len(upstream)}")
+
+          print("Loading existing mirrors...")
+          existing = {}
+          for item in paged(f"/repos/{DEST}/issues", {"state": "all"}):
+              if "pull_request" in item:
+                  continue
+              m = marker_re.search(item.get("body") or "")
+              if m:
+                  existing[int(m.group(1))] = item
+          print(f"Existing mirrors: {len(existing)}")
+
+          source_labels = {}
+          for label in paged(f"/repos/{SOURCE}/labels"):
+              source_labels[label["name"]] = label
+          dest_labels = {x["name"] for x in paged(f"/repos/{DEST}/labels")}
+
+          def ensure_label(name):
+              if name in dest_labels:
+                  return
+              if name == "upstream-mirror":
+                  payload = {"name": name, "color": "6f42c1", "description": "Mirrored from SagerNet/sing-box"}
+              else:
+                  src = source_labels.get(name, {})
+                  payload = {
+                      "name": name,
+                      "color": src.get("color") or "ededed",
+                      "description": (src.get("description") or "")[:100],
+                  }
+              write("POST", f"/repos/{DEST}/labels", payload)
+              dest_labels.add(name)
+
+          def desired_labels(src):
+              names = [x["name"] for x in src.get("labels", [])]
+              if "upstream-mirror" not in names:
+                  names.append("upstream-mirror")
+              for name in names:
+                  ensure_label(name)
+              return names
+
+          # Open issues first (newest first), then closed history (newest first).
+          upstream.sort(key=lambda x: (0 if x.get("state") == "open" else 1, -int(x["number"])))
+
+          created = 0
+          updated = 0
+          skipped = 0
+          try:
+              for src in upstream:
+                  number = int(src["number"])
+                  local = existing.get(number)
+                  body = issue_body(src)
+
+                  if local is not None:
+                      old_updated = ""
+                      m = updated_re.search(local.get("body") or "")
+                      if m:
+                          old_updated = m.group(1)
+                      same = (
+                          old_updated == (src.get("updated_at") or "")
+                          and local.get("title") == src.get("title")
+                          and local.get("state") == src.get("state")
+                      )
+                      if same:
+                          skipped += 1
+                          continue
+                      labels = desired_labels(src)
+                      payload = {
+                          "title": src.get("title") or f"Upstream issue #{number}",
+                          "body": body,
+                          "labels": labels,
+                          "state": src.get("state", "open"),
+                      }
+                      if src.get("state") == "closed":
+                          reason = src.get("state_reason")
+                          if reason in ("completed", "not_planned", "duplicate"):
+                              payload["state_reason"] = reason
+                      write("PATCH", f"/repos/{DEST}/issues/{local['number']}", payload)
+                      updated += 1
+                      continue
+
+                  # A newly mirrored closed issue needs two writes: create, then close.
+                  required = 2 if src.get("state") == "closed" else 1
+                  if writes + required > budget:
+                      raise StopForBudget
+                  labels = desired_labels(src)
+                  created_issue = write("POST", f"/repos/{DEST}/issues", {
+                      "title": src.get("title") or f"Upstream issue #{number}",
+                      "body": body,
+                      "labels": labels,
+                  })
+                  created += 1
+                  if src.get("state") == "closed":
+                      payload = {"state": "closed"}
+                      reason = src.get("state_reason")
+                      if reason in ("completed", "not_planned", "duplicate"):
+                          payload["state_reason"] = reason
+                      write("PATCH", f"/repos/{DEST}/issues/{created_issue['number']}", payload)
+
+          except (StopForBudget, StopForLimit):
+              pass
+
+          print(f"Mirror pass complete: created={created}, updated={updated}, unchanged={skipped}, writes={writes}/{budget}")
+          PY

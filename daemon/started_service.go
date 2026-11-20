@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"net/netip"
 	"os"
 	"runtime"
@@ -23,6 +24,7 @@ import (
 	"github.com/sagernet/sing-box/service/oomkiller"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/memory"
+	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/observable"
 	"github.com/sagernet/sing/service"
 
@@ -462,11 +464,25 @@ func (s *StartedService) ClearLogs(ctx context.Context, empty *emptypb.Empty) (*
 	return &emptypb.Empty{}, nil
 }
 
-func (s *StartedService) SubscribeStatus(request *SubscribeStatusRequest, server grpc.ServerStreamingServer[Status]) error {
-	interval := time.Duration(request.Interval)
-	if interval <= 0 {
-		interval = time.Second // Default to 1 second
+// minSubscribeInterval caps how often Subscribe* streams tick. The interval
+// field is a time.Duration in nanoseconds; a client that mistakes the unit
+// (e.g. sends milliseconds) would otherwise spin the daemon with a
+// microsecond ticker and burn a full CPU core building snapshots.
+const minSubscribeInterval = 200 * time.Millisecond
+
+func (s *StartedService) clampSubscribeInterval(stream string, rawInterval int64) time.Duration {
+	interval := time.Duration(rawInterval)
+	if interval >= minSubscribeInterval {
+		return interval
 	}
+	if interval > 0 {
+		s.WriteMessage(log.LevelWarn, fmt.Sprintf("%s: requested interval %dns is below the %v floor (the field is in nanoseconds), clamped", stream, rawInterval, minSubscribeInterval))
+	}
+	return minSubscribeInterval
+}
+
+func (s *StartedService) SubscribeStatus(request *SubscribeStatusRequest, server grpc.ServerStreamingServer[Status]) error {
+	interval := s.clampSubscribeInterval("SubscribeStatus", request.Interval)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	status := s.readStatus()
@@ -601,7 +617,19 @@ func (s *StartedService) readGroups() *Groups {
 		g.Tag = iGroup.Tag()
 		g.Type = iGroup.Type()
 		_, g.Selectable = iGroup.(*group.Selector)
-		g.Selected = iGroup.Now()
+		if display, available := iGroup.(interface{ Now() string }); available {
+			g.Selected = display.Now()
+		} else if selected := iGroup.Selected(N.NetworkTCP); selected != nil {
+			g.Selected = selected.Tag()
+		}
+		// lx:begin lx_command
+		// Mode tells a balanced urltest group from a least_test one. Type-asserted rather
+		// than switched on *group.URLTest, mirroring poolProvider: a non-urltest group
+		// simply leaves the field empty. SPEC 019 v2.
+		if provider, isModal := iGroup.(interface{ Mode() string }); isModal {
+			g.Mode = provider.Mode()
+		}
+		// lx:end lx_command
 		if boxService.cacheFile != nil {
 			if isExpand, loaded := boxService.cacheFile.LoadGroupExpand(g.Tag); loaded {
 				g.IsExpand = isExpand
@@ -617,15 +645,20 @@ func (s *StartedService) readGroups() *Groups {
 			var item GroupItem
 			item.Tag = itemTag
 			item.Type = itemOutbound.Type()
-			if history := historyStorage.LoadURLTestHistory(group.RealTag(boxService.outboundManager, itemOutbound)); history != nil {
+			if history := historyStorage.LoadURLTestHistory(group.RealTag(itemOutbound, N.NetworkTCP)); history != nil {
 				item.UrlTestTime = history.Time.Unix()
 				item.UrlTestDelay = int32(history.Delay)
 			}
 			g.Items = append(g.Items, &item)
 		}
-		if len(g.Items) == 0 {
-			continue
-		}
+		// lx:begin lx_command
+		// Upstream dropped groups with < 2 items here (commit 5bc0dfa9 gRPC refactor;
+		// since 3439be1bb it skips only empty groups),
+		// which silently hides single-node selectors and empty groups — a regression
+		// vs Clash, whose /proxies returned group.All() unfiltered. readGroups() is the
+		// single source feeding both SubscribeGroups (startup broadcast) and GetGroups,
+		// so emitting every group of any size fixes both. SPEC 015 §3.5.
+		// lx:end lx_command
 		gs.Group = append(gs.Group, &g)
 	}
 	return &gs
@@ -818,10 +851,7 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
 		return err
 	}
 
-	interval := time.Duration(request.Interval)
-	if interval <= 0 {
-		interval = time.Second
-	}
+	interval := s.clampSubscribeInterval("SubscribeConnections", request.Interval)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -1080,6 +1110,7 @@ func buildConnectionProto(metadata *trafficcontrol.TrackerMetadata) *Connection 
 		Outbound:      metadata.Outbound,
 		OutboundType:  metadata.OutboundType,
 		ChainList:     metadata.Chain,
+		DetourList:    metadata.Detour, // lx: SPEC 017 — transport detour tail
 		ProcessInfo:   processInfo,
 	}
 }
@@ -1179,7 +1210,7 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
 					Tag:  ob.Tag(),
 					Type: ob.Type(),
 				}
-				if history := historyStorage.LoadURLTestHistory(group.RealTag(boxService.outboundManager, ob)); history != nil {
+				if history := historyStorage.LoadURLTestHistory(group.RealTag(ob, N.NetworkTCP)); history != nil {
 					item.UrlTestTime = history.Time.Unix()
 					item.UrlTestDelay = int32(history.Delay)
 				}
@@ -1190,7 +1221,7 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
 					Tag:  ep.Tag(),
 					Type: ep.Type(),
 				}
-				if history := historyStorage.LoadURLTestHistory(group.RealTag(boxService.outboundManager, ep)); history != nil {
+				if history := historyStorage.LoadURLTestHistory(group.RealTag(ep, N.NetworkTCP)); history != nil {
 					item.UrlTestTime = history.Time.Unix()
 					item.UrlTestDelay = int32(history.Delay)
 				}
