@@ -1,5 +1,8 @@
 # Live baseline — idle-suspend OFF, real user config
 
+Исходные профили `.pb` перенесены в [архив измерений](../../../../../docs-lx/evidence-archive-20261120.md). Имена в командах ниже относятся к историческим файлам; перед повторным анализом восстановите выбранную версию из архива по Git blob SHA.
+
+
 Full metric snapshot of a **real production LxBox setup** with **idle-suspend
 disabled**, captured on 2026-07-01 ~09:34 MSK. This is the "before" point for a
 future "after" (idle-suspend on) comparison, and — more importantly — it directly

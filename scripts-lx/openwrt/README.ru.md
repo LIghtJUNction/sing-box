@@ -83,7 +83,7 @@ include_interface: br-lxdvpn          ← в UI лаунчера поле "LAN i
 
 Код одноразовый и сгорает после первой попытки — если сопряжение не прошло, выпустить новый invite (`sing-box lxd client add`, рецепт ниже) и вставить свежую строку.
 
-![Диалог Add remote machine](img/launcher-add-remote.png)
+[Диалог Add remote machine](../../docs-lx/evidence-archive-20261120.md)
 
 ⚠️ **Не перезапускать демон, пока не введён код.** Код живёт в памяти процесса; рестарт даёт `enroll: no active enrollment code`, и invite придётся выпускать заново.
 
@@ -98,7 +98,7 @@ include_interface: br-lxdvpn          ← в UI лаунчера поле "LAN i
 - галка **Gateway mode (share to LAN)** — включить;
 - **LAN interfaces (include_interface)** — ⚠️ не забыть вписать мост из сводки (`br-lxdvpn`).
 
-![Config Wizard, вкладка Target](img/wizard-target.png)
+[Config Wizard, вкладка Target](../../docs-lx/evidence-archive-20261120.md)
 
 Вкладка **Settings**, блок TUN:
 
@@ -107,7 +107,7 @@ include_interface: br-lxdvpn          ← в UI лаунчера поле "LAN i
 - **TUN interface addresses** — адрес из сводки (`172.16.0.1/30`): к нему привязано firewall-правило `sbtun_tcp`;
 - **TUN strict route** — выключен; **TUN stack** — `system`; MTU — можно оставить предложенный.
 
-![Config Wizard, вкладка Settings — блок TUN](img/wizard-settings-tun.png)
+[Config Wizard, вкладка Settings — блок TUN](../../docs-lx/evidence-archive-20261120.md)
 
 В итоге tun-inbound должен нести значения из сводки:
 

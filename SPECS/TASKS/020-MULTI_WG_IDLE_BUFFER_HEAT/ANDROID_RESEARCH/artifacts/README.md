@@ -1,5 +1,8 @@
 # Artifacts — Android idle-suspend run
 
+Исходные профили `.pb` перенесены в [архив измерений](../../../../../docs-lx/evidence-archive-20261120.md). Имена в командах ниже относятся к историческим файлам; перед повторным анализом восстановите выбранную версию из архива по Git blob SHA.
+
+
 Raw evidence for [`../RESULTS.md`](../RESULTS.md). Credential-free: the full core log
 (which also carried the user's DNS lookups and per-app connection lines) was filtered
 down to just the `lx idle:` transitions; goroutine/heap dumps contain only stack

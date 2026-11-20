@@ -1,5 +1,8 @@
 # A/B result — idle-suspend OFF → ON, real user config
 
+Исходные профили `.pb` перенесены в [архив измерений](../../../../../docs-lx/evidence-archive-20261120.md). Имена в командах ниже относятся к историческим файлам; перед повторным анализом восстановите выбранную версию из архива по Git blob SHA.
+
+
 The before/after on a **real production LxBox setup** (not synthetic): 11
 WireGuard/AmneziaWG endpoints, only ~1 carrying traffic, the rest idle. Captured on
 2026-07-01 on a physical CPH2411 (Android 15, arm64), core `1.14.0-lx.1-rc.18`,

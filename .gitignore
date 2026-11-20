@@ -22,3 +22,16 @@ CLAUDE.md
 AGENTS.md
 /.claude/
 /test/cache.db
+
+# Generated evidence is stored in the external archive.
+/SPECS/TASKS/020-MULTI_WG_IDLE_BUFFER_HEAT/ANDROID_RESEARCH/artifacts/device-heap-after.pb
+/SPECS/TASKS/020-MULTI_WG_IDLE_BUFFER_HEAT/ANDROID_RESEARCH/artifacts/device-heap-before.pb
+/SPECS/TASKS/020-MULTI_WG_IDLE_BUFFER_HEAT/ANDROID_RESEARCH/live-baseline/after/cpu.pb
+/SPECS/TASKS/020-MULTI_WG_IDLE_BUFFER_HEAT/ANDROID_RESEARCH/live-baseline/after/heap.pb
+/SPECS/TASKS/020-MULTI_WG_IDLE_BUFFER_HEAT/ANDROID_RESEARCH/live-baseline/cpu.pb
+/SPECS/TASKS/020-MULTI_WG_IDLE_BUFFER_HEAT/ANDROID_RESEARCH/live-baseline/heap.pb
+/SPECS/TASKS/020-MULTI_WG_IDLE_BUFFER_HEAT/ANDROID_RESEARCH/nogro-experiment/heap-nogro-env1-batch-NOT-applied.pb
+/SPECS/TASKS/020-MULTI_WG_IDLE_BUFFER_HEAT/ANDROID_RESEARCH/nogro-experiment/heap-stock-gro-on.pb
+/scripts-lx/openwrt/img/launcher-add-remote.png
+/scripts-lx/openwrt/img/wizard-settings-tun.png
+/scripts-lx/openwrt/img/wizard-target.png

@@ -1,5 +1,8 @@
 # Results — Android idle-suspend run
 
+Исходные профили `.pb` перенесены в [архив измерений](../../../../docs-lx/evidence-archive-20261120.md). Имена в командах ниже относятся к историческим файлам; перед повторным анализом восстановите выбранную версию из архива по Git blob SHA.
+
+
 Device: **CPH2411**, Android **15** (SDK 35), **arm64-v8a**.
 Core: **`1.14.0-lx.1-rc.18`** (confirmed via the app's `/device` core_version).
 App: LxBox 2.8.0-dev.2 (build 2972).
