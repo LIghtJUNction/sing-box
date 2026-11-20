@@ -40,12 +40,12 @@ func socketDiagExchange(tb testing.TB) func([]byte) (uint32, uint32, error) {
 		if _, err := syscall.Write(fds[1], reply); err != nil {
 			return 0, 0, err
 		}
-		inode, uid, queryErr := querySocketDiag(fds[0], request)
+		inode, uid, queryErr := querySocketDiag(fds[0], request[:])
 		n, err := syscall.Read(fds[1], received[:])
 		if err != nil {
 			return 0, 0, err
 		}
-		if !bytes.Equal(received[:n], request) {
+		if !bytes.Equal(received[:n], request[:]) {
 			return 0, 0, fmt.Errorf("netlink request changed")
 		}
 		return inode, uid, queryErr

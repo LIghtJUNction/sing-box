@@ -9,6 +9,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	R "github.com/sagernet/sing-box/route/rule"
 	E "github.com/sagernet/sing/common/exceptions"
+	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service/pause"
 )
 
@@ -146,10 +147,13 @@ func walkReachable(tag string, reachable map[string]bool, resolve func(tag strin
 		return
 	}
 
-	// A selector routes through its single current choice only — Now(), NOT All()
-	// (a non-selected member is exactly what we want to be able to suspend).
+	// Follow only active choices, including distinct TCP and UDP selections.
 	if group, ok := outbound.(adapter.OutboundGroup); ok {
-		walkReachable(group.Now(), reachable, resolve)
+		for _, network := range []string{N.NetworkTCP, N.NetworkUDP} {
+			if selected := group.Selected(network); selected != nil {
+				walkReachable(selected.Tag(), reachable, resolve)
+			}
+		}
 		return
 	}
 
@@ -183,9 +187,7 @@ func (r *Router) startIdleSuspend() error {
 	}
 	r.idleStop = make(chan struct{})
 	period := r.idleSuspend / idleTickDivisor
-	if period < idleTickFloor {
-		period = idleTickFloor
-	}
+	period = max(period, idleTickFloor)
 	ticker := time.NewTicker(period)
 	if r.pauseManager != nil {
 		r.idlePauseCallback = pause.RegisterTicker(r.pauseManager, ticker, period, nil)

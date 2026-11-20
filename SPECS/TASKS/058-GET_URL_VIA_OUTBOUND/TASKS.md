@@ -49,3 +49,16 @@
 
 - [ ] `https://1.1.1.1/cdn-cgi/trace` через vless-outbound и через WG-endpoint
 - [ ] HTTPS на Android без кастомных корней в конфиге
+
+## Дополнение — строгая REST-проба для MagicNet
+
+- [x] Helper HTTPS GET/204 с выбранным outbound, проверкой TLS, запретом redirect,
+      лимитами URL/заголовков и без чтения тела.
+- [x] REST-контракт с `strict_probe`, `expected_status`, `ok` и фактическим
+      `http_status`; явные причины отказов, сохранение отмены запроса.
+- [x] Build-tag `with_lx_probe`, парный stub и пятистрочный lx-шов;
+      старые delay/HEAD и история urltest не изменены.
+- [x] `GOMAXPROCS=2 go test -p 2 -tags with_lx_probe ./common/urltest ./experimental/clashapi`.
+- [x] `GOMAXPROCS=2 go test -p 2 ./common/urltest ./experimental/clashapi`.
+- [x] `GOMAXPROCS=2 go vet -p 2 -tags with_lx_probe ./common/urltest ./experimental/clashapi`.
+- [ ] Проверка strict endpoint на устройстве с опубликованной сборкой MagicNet.

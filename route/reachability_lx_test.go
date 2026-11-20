@@ -4,6 +4,7 @@
 package route
 
 import (
+	"io"
 	"testing"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -28,8 +29,14 @@ type stubSelector struct {
 	all []string
 }
 
-func (s *stubSelector) Now() string   { return s.now }
-func (s *stubSelector) All() []string { return s.all }
+func (s *stubSelector) Selected(string) adapter.Outbound {
+	if s.now == "" {
+		return nil
+	}
+	return &stubOutbound{tag: s.now}
+}
+func (s *stubSelector) AttachConnection(io.Closer) func() { return func() {} }
+func (s *stubSelector) All() []string                     { return s.all }
 
 // stubURLTest implements reachableActiveTags — its whole active pool is reachable.
 type stubURLTest struct {

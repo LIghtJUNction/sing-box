@@ -1,0 +1,105 @@
+go: downloading github.com/sagernet/sing v0.9.5-0.20260917142815-f37989cadbf0
+go: downloading golang.org/x/exp v0.0.0-20250711185948-6ae5c78190dc
+go: downloading github.com/stretchr/testify v1.11.1
+go: downloading github.com/vishvananda/netns v0.0.4
+go: downloading golang.org/x/sync v0.20.0
+go: downloading github.com/davecgh/go-spew v1.1.1
+go: downloading github.com/pmezard/go-difflib v1.0.0
+=== RUN   TestLifecycleAB
+=== RUN   TestLifecycleAB/accept_ack_1000
+    lifecycle_ab_test.go:50: LIFECYCLE_AB {"count":1000,"heap_delta_bytes":291648,"installed":1000,"retained_entries":1000,"scenario":"accepted_ack"}
+=== RUN   TestLifecycleAB/nat_active_1000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":1000,"elapsed_seconds":31,"installed":1000,"retained_addresses":1000,"retained_sessions":1000,"scenario":"nat_active"}
+=== RUN   TestLifecycleAB/nat_half_fin_1000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":1000,"elapsed_seconds":31,"installed":1000,"retained_addresses":1000,"retained_sessions":1000,"scenario":"nat_half_fin"}
+=== RUN   TestLifecycleAB/nat_fin_1000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":1000,"elapsed_seconds":31,"installed":1000,"retained_addresses":1000,"retained_sessions":1000,"scenario":"nat_fin"}
+=== RUN   TestLifecycleAB/nat_rst_1000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":1000,"elapsed_seconds":31,"installed":1000,"retained_addresses":1000,"retained_sessions":1000,"scenario":"nat_rst"}
+=== RUN   TestLifecycleAB/accept_ack_10000
+    lifecycle_ab_test.go:50: LIFECYCLE_AB {"count":10000,"heap_delta_bytes":2561072,"installed":10000,"retained_entries":10000,"scenario":"accepted_ack"}
+=== RUN   TestLifecycleAB/nat_active_10000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":10000,"elapsed_seconds":31,"installed":10000,"retained_addresses":10000,"retained_sessions":10000,"scenario":"nat_active"}
+=== RUN   TestLifecycleAB/nat_half_fin_10000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":10000,"elapsed_seconds":31,"installed":10000,"retained_addresses":10000,"retained_sessions":10000,"scenario":"nat_half_fin"}
+=== RUN   TestLifecycleAB/nat_fin_10000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":10000,"elapsed_seconds":31,"installed":10000,"retained_addresses":10000,"retained_sessions":10000,"scenario":"nat_fin"}
+=== RUN   TestLifecycleAB/nat_rst_10000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":10000,"elapsed_seconds":31,"installed":10000,"retained_addresses":10000,"retained_sessions":10000,"scenario":"nat_rst"}
+--- PASS: TestLifecycleAB (0.05s)
+    --- PASS: TestLifecycleAB/accept_ack_1000 (0.00s)
+    --- PASS: TestLifecycleAB/nat_active_1000 (0.00s)
+    --- PASS: TestLifecycleAB/nat_half_fin_1000 (0.00s)
+    --- PASS: TestLifecycleAB/nat_fin_1000 (0.00s)
+    --- PASS: TestLifecycleAB/nat_rst_1000 (0.00s)
+    --- PASS: TestLifecycleAB/accept_ack_10000 (0.02s)
+    --- PASS: TestLifecycleAB/nat_active_10000 (0.01s)
+    --- PASS: TestLifecycleAB/nat_half_fin_10000 (0.01s)
+    --- PASS: TestLifecycleAB/nat_fin_10000 (0.01s)
+    --- PASS: TestLifecycleAB/nat_rst_10000 (0.01s)
+=== RUN   TestLifecycleAB
+=== RUN   TestLifecycleAB/accept_ack_1000
+    lifecycle_ab_test.go:50: LIFECYCLE_AB {"count":1000,"heap_delta_bytes":290448,"installed":1000,"retained_entries":1000,"scenario":"accepted_ack"}
+=== RUN   TestLifecycleAB/nat_active_1000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":1000,"elapsed_seconds":31,"installed":1000,"retained_addresses":1000,"retained_sessions":1000,"scenario":"nat_active"}
+=== RUN   TestLifecycleAB/nat_half_fin_1000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":1000,"elapsed_seconds":31,"installed":1000,"retained_addresses":1000,"retained_sessions":1000,"scenario":"nat_half_fin"}
+=== RUN   TestLifecycleAB/nat_fin_1000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":1000,"elapsed_seconds":31,"installed":1000,"retained_addresses":1000,"retained_sessions":1000,"scenario":"nat_fin"}
+=== RUN   TestLifecycleAB/nat_rst_1000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":1000,"elapsed_seconds":31,"installed":1000,"retained_addresses":1000,"retained_sessions":1000,"scenario":"nat_rst"}
+=== RUN   TestLifecycleAB/accept_ack_10000
+    lifecycle_ab_test.go:50: LIFECYCLE_AB {"count":10000,"heap_delta_bytes":2561072,"installed":10000,"retained_entries":10000,"scenario":"accepted_ack"}
+=== RUN   TestLifecycleAB/nat_active_10000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":10000,"elapsed_seconds":31,"installed":10000,"retained_addresses":10000,"retained_sessions":10000,"scenario":"nat_active"}
+=== RUN   TestLifecycleAB/nat_half_fin_10000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":10000,"elapsed_seconds":31,"installed":10000,"retained_addresses":10000,"retained_sessions":10000,"scenario":"nat_half_fin"}
+=== RUN   TestLifecycleAB/nat_fin_10000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":10000,"elapsed_seconds":31,"installed":10000,"retained_addresses":10000,"retained_sessions":10000,"scenario":"nat_fin"}
+=== RUN   TestLifecycleAB/nat_rst_10000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":10000,"elapsed_seconds":31,"installed":10000,"retained_addresses":10000,"retained_sessions":10000,"scenario":"nat_rst"}
+--- PASS: TestLifecycleAB (0.04s)
+    --- PASS: TestLifecycleAB/accept_ack_1000 (0.00s)
+    --- PASS: TestLifecycleAB/nat_active_1000 (0.00s)
+    --- PASS: TestLifecycleAB/nat_half_fin_1000 (0.00s)
+    --- PASS: TestLifecycleAB/nat_fin_1000 (0.00s)
+    --- PASS: TestLifecycleAB/nat_rst_1000 (0.00s)
+    --- PASS: TestLifecycleAB/accept_ack_10000 (0.01s)
+    --- PASS: TestLifecycleAB/nat_active_10000 (0.01s)
+    --- PASS: TestLifecycleAB/nat_half_fin_10000 (0.01s)
+    --- PASS: TestLifecycleAB/nat_fin_10000 (0.01s)
+    --- PASS: TestLifecycleAB/nat_rst_10000 (0.01s)
+=== RUN   TestLifecycleAB
+=== RUN   TestLifecycleAB/accept_ack_1000
+    lifecycle_ab_test.go:50: LIFECYCLE_AB {"count":1000,"heap_delta_bytes":290432,"installed":1000,"retained_entries":1000,"scenario":"accepted_ack"}
+=== RUN   TestLifecycleAB/nat_active_1000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":1000,"elapsed_seconds":31,"installed":1000,"retained_addresses":1000,"retained_sessions":1000,"scenario":"nat_active"}
+=== RUN   TestLifecycleAB/nat_half_fin_1000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":1000,"elapsed_seconds":31,"installed":1000,"retained_addresses":1000,"retained_sessions":1000,"scenario":"nat_half_fin"}
+=== RUN   TestLifecycleAB/nat_fin_1000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":1000,"elapsed_seconds":31,"installed":1000,"retained_addresses":1000,"retained_sessions":1000,"scenario":"nat_fin"}
+=== RUN   TestLifecycleAB/nat_rst_1000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":1000,"elapsed_seconds":31,"installed":1000,"retained_addresses":1000,"retained_sessions":1000,"scenario":"nat_rst"}
+=== RUN   TestLifecycleAB/accept_ack_10000
+    lifecycle_ab_test.go:50: LIFECYCLE_AB {"count":10000,"heap_delta_bytes":2561072,"installed":10000,"retained_entries":10000,"scenario":"accepted_ack"}
+=== RUN   TestLifecycleAB/nat_active_10000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":10000,"elapsed_seconds":31,"installed":10000,"retained_addresses":10000,"retained_sessions":10000,"scenario":"nat_active"}
+=== RUN   TestLifecycleAB/nat_half_fin_10000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":10000,"elapsed_seconds":31,"installed":10000,"retained_addresses":10000,"retained_sessions":10000,"scenario":"nat_half_fin"}
+=== RUN   TestLifecycleAB/nat_fin_10000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":10000,"elapsed_seconds":31,"installed":10000,"retained_addresses":10000,"retained_sessions":10000,"scenario":"nat_fin"}
+=== RUN   TestLifecycleAB/nat_rst_10000
+    lifecycle_ab_test.go:97: LIFECYCLE_AB {"count":10000,"elapsed_seconds":31,"installed":10000,"retained_addresses":10000,"retained_sessions":10000,"scenario":"nat_rst"}
+--- PASS: TestLifecycleAB (0.07s)
+    --- PASS: TestLifecycleAB/accept_ack_1000 (0.00s)
+    --- PASS: TestLifecycleAB/nat_active_1000 (0.00s)
+    --- PASS: TestLifecycleAB/nat_half_fin_1000 (0.00s)
+    --- PASS: TestLifecycleAB/nat_fin_1000 (0.00s)
+    --- PASS: TestLifecycleAB/nat_rst_1000 (0.00s)
+    --- PASS: TestLifecycleAB/accept_ack_10000 (0.01s)
+    --- PASS: TestLifecycleAB/nat_active_10000 (0.03s)
+    --- PASS: TestLifecycleAB/nat_half_fin_10000 (0.01s)
+    --- PASS: TestLifecycleAB/nat_fin_10000 (0.01s)
+    --- PASS: TestLifecycleAB/nat_rst_10000 (0.01s)
+PASS
+ok  	github.com/sagernet/sing-tun	0.174s

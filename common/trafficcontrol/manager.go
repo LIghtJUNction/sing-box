@@ -1,6 +1,7 @@
 package trafficcontrol
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/sagernet/sing/common/cleanup"
 	"github.com/sagernet/sing/common/observable"
 	"github.com/sagernet/sing/common/x/list"
+	"github.com/sagernet/sing/service"
 
 	"github.com/gofrs/uuid/v5"
 )
@@ -35,8 +37,7 @@ var (
 )
 
 type Manager struct {
-	outbound adapter.OutboundManager
-
+	outbound                adapter.OutboundManager
 	connections             compatible.Map[uuid.UUID, Tracker]
 	closedConnectionsAccess sync.Mutex
 	closedConnections       list.List[TrackerMetadata]
@@ -45,12 +46,11 @@ type Manager struct {
 
 	eventSubscriber *observable.Subscriber[ConnectionEvent]
 	eventObserver   *observable.Observer[ConnectionEvent]
-	cleaner         *cleanup.Cleaner
 }
 
-func NewManager(outbound adapter.OutboundManager) *Manager {
+func NewManager(ctx context.Context) *Manager {
 	return &Manager{
-		outbound:        outbound,
+		outbound:        service.FromContext[adapter.OutboundManager](ctx),
 		eventSubscriber: observable.NewSubscriber[ConnectionEvent](256),
 	}
 }
@@ -59,20 +59,15 @@ func (m *Manager) Name() string {
 	return "traffic manager"
 }
 
-func (m *Manager) Start(stage adapter.StartStage) error {
+func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage == adapter.StartStateInitialize {
 		m.eventObserver = observable.NewObserver(m.eventSubscriber, 64)
-		m.cleaner = cleanup.Add(m.Clear)
-	}
-	return nil
-}
-
-func (m *Manager) Close() error {
-	if m.cleaner != nil {
-		m.cleaner.Close()
-	}
-	if m.eventObserver != nil {
-		return m.eventObserver.Close()
+		scope.Add(m.eventObserver.Close)
+		cleaner := cleanup.Add(m.Clear)
+		scope.Add(func() error {
+			cleaner.Close()
+			return nil
+		})
 	}
 	return nil
 }

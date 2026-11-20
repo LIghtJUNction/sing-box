@@ -29,6 +29,13 @@ type ClientTransportConstructor func(ctx context.Context, dialer N.Dialer, serve
 
 var clientTransportRegistry = make(map[string]ClientTransportConstructor)
 
+func normalizeClientResult[T adapter.V2RayClientTransport](client T, err error) (adapter.V2RayClientTransport, error) {
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
 // RegisterClient registers a client transport constructor for the given type.
 // Built-in types are registered below; downstream types (xhttp) register from
 // their own package under a build tag.
@@ -44,13 +51,13 @@ func lookupClientTransport(transportType string) (ClientTransportConstructor, bo
 
 func init() {
 	RegisterClient(C.V2RayTransportTypeHTTP, func(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayTransportOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
-		return v2rayhttp.NewClient(ctx, dialer, serverAddr, options.HTTPOptions, tlsConfig)
+		return normalizeClientResult(v2rayhttp.NewClient(ctx, dialer, serverAddr, options.HTTPOptions, tlsConfig))
 	})
 	RegisterClient(C.V2RayTransportTypeGRPC, func(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayTransportOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
 		return NewGRPCClient(ctx, dialer, serverAddr, options.GRPCOptions, tlsConfig)
 	})
 	RegisterClient(C.V2RayTransportTypeWebsocket, func(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayTransportOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
-		return v2raywebsocket.NewClient(ctx, dialer, serverAddr, options.WebsocketOptions, tlsConfig)
+		return normalizeClientResult(v2raywebsocket.NewClient(ctx, dialer, serverAddr, options.WebsocketOptions, tlsConfig))
 	})
 	RegisterClient(C.V2RayTransportTypeQUIC, func(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayTransportOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
 		if tlsConfig == nil {
@@ -59,6 +66,6 @@ func init() {
 		return NewQUICClient(ctx, dialer, serverAddr, options.QUICOptions, tlsConfig)
 	})
 	RegisterClient(C.V2RayTransportTypeHTTPUpgrade, func(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayTransportOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
-		return v2rayhttpupgrade.NewClient(ctx, dialer, serverAddr, options.HTTPUpgradeOptions, tlsConfig)
+		return normalizeClientResult(v2rayhttpupgrade.NewClient(ctx, dialer, serverAddr, options.HTTPUpgradeOptions, tlsConfig))
 	})
 }

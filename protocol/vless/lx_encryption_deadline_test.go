@@ -2,6 +2,8 @@ package vless
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/rand"
 	"errors"
 	"net"
 	"testing"
@@ -91,5 +93,41 @@ func TestWrapEncryptionWithoutDeadlineTouchesNothing(t *testing.T) {
 
 	if conn.bothCalled || conn.writeCalled || conn.readCalled {
 		t.Fatal("wrapEncryption armed a deadline although the dial context carries none")
+	}
+}
+
+// A cancelled parent without an explicit deadline must also release a blocked
+// encryption write. Box shutdown uses cancellation, not a deadline; missing
+// this path left one URL-test goroutine alive after every restart.
+func TestWrapEncryptionCancellationReleasesBlockedWrite(t *testing.T) {
+	privateKey, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := new(encryption.ClientInstance)
+	if err = instance.Init([][]byte{privateKey.PublicKey().Bytes()}, 0, 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	dialer := &vlessDialer{encryption: instance}
+	client, server := net.Pipe()
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, wrapErr := dialer.wrapEncryption(ctx, client)
+		done <- wrapErr
+	}()
+
+	// net.Pipe has no buffer, so Handshake is blocked in its first write here.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case err = <-done:
+		if err == nil {
+			t.Fatal("cancelled handshake unexpectedly succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled handshake left its write blocked")
 	}
 }

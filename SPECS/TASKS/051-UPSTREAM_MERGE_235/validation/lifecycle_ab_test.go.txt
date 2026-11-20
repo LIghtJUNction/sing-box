@@ -1,0 +1,129 @@
+package tun
+
+import (
+	"context"
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"net/netip"
+	"runtime"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/sagernet/sing-tun/gtcpip/header"
+)
+
+func TestLifecycleAB(t *testing.T) {
+	for _, count := range []int{1000, 10000} {
+		t.Run(fmt.Sprintf("accept_ack_%d", count), func(t *testing.T) {
+			dispatcher := &ForwardDispatcher{epoch: time.Now()}
+			dispatcher.stageCount.Store(1)
+			stage := &ForwardStage{dispatcher: dispatcher, table: make(map[flowKey]*flowEntry)}
+			runtime.GC()
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			for i := range count {
+				raw := abTCPPacket(uint16(10000+i), header.TCPFlagSyn)
+				parsed, valid := parseForwardPacket(raw[:])
+				if !valid || !parsed.hasFlow {
+					t.Fatal("invalid input SYN")
+				}
+				// Use the production installation routine once policy accepts
+				// the SYN; policy evaluation and network I/O are out of scope.
+				stage.installAccept(parsed.flowKey(), &parsed, FlowVerdict{Action: ActionAccept}, dispatcher.now())
+			}
+			installed := len(stage.table)
+			if installed != count {
+				t.Fatalf("installed %d, want %d", installed, count)
+			}
+			for i := range count {
+				raw := abTCPPacket(uint16(10000+i), header.TCPFlagAck)
+				if stage.Dispatch(raw[:]) {
+					t.Fatal("accepted ACK was not passed to the stack")
+				}
+			}
+			retained := len(stage.table)
+			runtime.GC()
+			runtime.ReadMemStats(&after)
+			runtime.KeepAlive(stage)
+			abLog(t, map[string]any{
+				"scenario": "accepted_ack", "count": count,
+				"installed": installed, "retained_entries": retained,
+				"heap_delta_bytes": int64(after.HeapAlloc) - int64(before.HeapAlloc),
+			})
+		})
+		for _, closeMode := range []string{"active", "half_fin", "fin", "rst"} {
+			t.Run(fmt.Sprintf("nat_%s_%d", closeMode, count), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					ctx, cancel := context.WithCancel(context.Background())
+					defer cancel()
+					nat := NewNat(ctx, tcpEstablishedTimeout)
+					synctest.Wait()
+					sourceIP := netip.MustParseAddr("10.0.0.1")
+					destination := netip.MustParseAddrPort("192.0.2.1:443")
+					for i := range count {
+						source := netip.AddrPortFrom(sourceIP, uint16(10000+i))
+						port := abLookup(nat, source, destination, header.TCPFlagSyn)
+						if port == 0 {
+							t.Fatal("NAT port allocation failed")
+						}
+						switch closeMode {
+						case "half_fin", "fin":
+							abLookup(nat, source, destination, header.TCPFlagFin|header.TCPFlagAck)
+							if closeMode == "fin" && abLookupBack(nat, port, header.TCPFlagFin|header.TCPFlagAck) == nil {
+								t.Fatal("reverse NAT session missing")
+							}
+						case "rst":
+							abLookup(nat, source, destination, header.TCPFlagRst)
+						}
+					}
+					nat.portAccess.RLock()
+					installed := len(nat.portMap)
+					nat.portAccess.RUnlock()
+					if installed != count {
+						t.Fatalf("installed %d, want %d", installed, count)
+					}
+					// Real production sweeper, virtual time: new close grace
+					// is 10 s and its sweep period is 30 s. No manual deletion.
+					time.Sleep(31 * time.Second)
+					synctest.Wait()
+					nat.addrAccess.RLock()
+					addresses := len(nat.addrMap)
+					nat.addrAccess.RUnlock()
+					nat.portAccess.RLock()
+					sessions := len(nat.portMap)
+					nat.portAccess.RUnlock()
+					abLog(t, map[string]any{
+						"scenario": "nat_" + closeMode, "count": count,
+						"installed": installed, "elapsed_seconds": 31,
+						"retained_addresses": addresses, "retained_sessions": sessions,
+					})
+					cancel()
+					synctest.Wait()
+				})
+			})
+		}
+	}
+}
+
+func abTCPPacket(port uint16, flags header.TCPFlags) [40]byte {
+	var packet [40]byte
+	packet[0], packet[8], packet[9] = 0x45, 64, uint8(header.TCPProtocolNumber)
+	binary.BigEndian.PutUint16(packet[2:], uint16(len(packet)))
+	copy(packet[12:16], []byte{10, 0, 0, 1})
+	copy(packet[16:20], []byte{192, 0, 2, 1})
+	binary.BigEndian.PutUint16(packet[20:], port)
+	binary.BigEndian.PutUint16(packet[22:], 443)
+	packet[32], packet[33] = 5<<4, byte(flags)
+	return packet
+}
+
+func abLog(t *testing.T, result map[string]any) {
+	t.Helper()
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("LIFECYCLE_AB %s", encoded)
+}

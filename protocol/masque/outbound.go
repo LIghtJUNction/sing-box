@@ -512,9 +512,7 @@ func (o *Outbound) idleWatcher(s *session) {
 	// Poll at a fraction of the idle window (bounded) so suspend fires promptly
 	// without a busy tick.
 	interval := o.idleTimeout / 4
-	if interval < time.Second {
-		interval = time.Second
-	}
+	interval = max(interval, time.Second)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -676,10 +674,6 @@ func (o *Outbound) rememberNetwork(network string) {
 
 // lx:end masque-auto
 
-func (o *Outbound) connectH3(ctx context.Context) (io.Closer, masque.IpConn, error) {
-	return o.connectH3WithBudget(ctx, 0)
-}
-
 // connectH3WithBudget dials h3, optionally capping the QUIC handshake.
 //
 // lx: SPEC 074 — the budget starts once the UDP socket is up, deliberately: the
@@ -755,7 +749,7 @@ func (o *Outbound) pumpToTunnel(s *session) {
 			return
 		}
 		s.markActivity(time.Now().UnixNano())
-		for i := 0; i < count; i++ {
+		for i := range count {
 			icmp, werr := s.ipConn.WritePacket(bufs[i][:sizes[i]])
 			if werr != nil {
 				o.pumpFatal(s, "write to tunnel", werr)
@@ -848,6 +842,13 @@ func (o *Outbound) lookup(ctx context.Context, domain string) ([]netip.Addr, err
 		return nil, E.New("masque: no DNS router available to resolve ", domain)
 	}
 	return o.dnsRouter.Lookup(ctx, domain, adapter.DNSQueryOptions{})
+}
+
+func (o *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage == adapter.StartStateInitialize {
+		scope.Add(o.Close)
+	}
+	return nil
 }
 
 func (o *Outbound) Close() error {

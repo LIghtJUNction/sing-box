@@ -34,9 +34,13 @@ func TestNormalizeFakeIPPrefixesRejectsSafetyOverlap(t *testing.T) {
 	}{
 		{name: "IPv4 unspecified", ipv4: "0.0.0.0/8"},
 		{name: "IPv4 loopback", ipv4: "127.128.0.0/9"},
+		{name: "IPv4 link-local", ipv4: "169.254.0.0/16"},
+		{name: "IPv4 link-local supernet", ipv4: "169.0.0.0/8"},
 		{name: "IPv4 multicast", ipv4: "239.0.0.0/8"},
 		{name: "IPv6 unspecified", ipv6: "::/128"},
 		{name: "IPv6 loopback", ipv6: "::1/128"},
+		{name: "IPv6 link-local", ipv6: "fe80::/64"},
+		{name: "IPv6 link-local supernet", ipv6: "fe00::/8"},
 		{name: "IPv6 reserved compatibility", ipv6: "::ff00:0:0/104"},
 		{name: "IPv6 multicast", ipv6: "ff02::/16"},
 	} {
