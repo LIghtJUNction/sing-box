@@ -54,7 +54,14 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, E.New("tcp_fast_open is not supported with anytls outbound")
 	}
 
-	tlsConfig, err := tls.NewClient(ctx, logger, options.Server, common.PtrValueOrDefault(options.TLS))
+	tlsConfig, err := tls.NewClientWithOptions(tls.ClientOptions{
+		Context:       ctx,
+		Logger:        logger,
+		ServerAddress: options.Server,
+		Options:       common.PtrValueOrDefault(options.TLS),
+		// lx: SPEC 060 — see the vless outbound.
+		DialedThroughDetour: tls.DialedThroughDetour(options.DialerOptions),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +90,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	return outbound, nil
 }
 
-func (h *Outbound) Start(stage adapter.StartStage) error {
+func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateInitialize {
 		return nil
 	}
@@ -92,6 +99,7 @@ func (h *Outbound) Start(stage adapter.StartStage) error {
 		return err
 	}
 	h.client = client
+	scope.Add(client.Close)
 	h.uotClient = &uot.Client{
 		Dialer:  anytlsDialer(client.DialContext),
 		Version: uot.Version,
@@ -150,8 +158,4 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	metadata.Destination = destination
 	h.logger.InfoContext(ctx, "outbound UoT packet connection to ", destination)
 	return h.uotClient.ListenPacket(ctx, destination)
-}
-
-func (h *Outbound) Close() error {
-	return common.Close(common.PtrOrNil(h.client))
 }

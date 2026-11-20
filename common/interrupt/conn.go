@@ -16,8 +16,8 @@ type Conn struct {
 
 func (c *Conn) Close() error {
 	c.group.access.Lock()
-	defer c.group.access.Unlock()
 	c.group.connections.Remove(c.element)
+	c.group.access.Unlock()
 	return c.Conn.Close()
 }
 
@@ -45,8 +45,8 @@ func newPacketConn(group *Group, conn net.PacketConn, element *list.Element[*gro
 
 func (c *PacketConn) Close() error {
 	c.group.access.Lock()
-	defer c.group.access.Unlock()
 	c.group.connections.Remove(c.element)
+	c.group.access.Unlock()
 	return c.NetPacketConn.Close()
 }
 
@@ -61,3 +61,21 @@ func (c *PacketConn) WriterReplaceable() bool {
 func (c *PacketConn) Upstream() any {
 	return c.NetPacketConn
 }
+
+// SingPacketConn wraps an inbound sing packet connection without converting it.
+type SingPacketConn struct {
+	N.PacketConn
+	group   *Group
+	element *list.Element[*groupConnItem]
+}
+
+func (c *SingPacketConn) Close() error {
+	c.group.access.Lock()
+	c.group.connections.Remove(c.element)
+	c.group.access.Unlock()
+	return c.PacketConn.Close()
+}
+
+func (c *SingPacketConn) ReaderReplaceable() bool { return true }
+func (c *SingPacketConn) WriterReplaceable() bool { return true }
+func (c *SingPacketConn) Upstream() any           { return c.PacketConn }

@@ -236,6 +236,81 @@ func TestSharedNetworkProgramRunIntegration(t *testing.T) {
 	})
 }
 
+func TestSharedNetworkLinkLocalSafetyIntegration(t *testing.T) {
+	requireEBPFIntegration(t, "preserve link-local traffic with private bypass disabled")
+	backend, err := PrepareSharedNetwork(nil, SharedNetworkConfig{
+		ListenerPort: 65531, EnableTCP: true, EnableUDP: true,
+		DNSMode: DNSModeOff, BypassPrivateAddress: false,
+		RedirectIPv4: netip.MustParsePrefix("127.128.0.0/9"),
+		RedirectIPv6: netip.MustParsePrefix("fd53:696e:672d:626f::/64"),
+		MapCapacity:  DefaultSharedNetworkMapCapacities(), UDPTimeout: 5 * time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	if err := backend.Enable(); err != nil {
+		t.Fatal(err)
+	}
+	ingress := backend.runtime.programs[sharedNetworkProgramIngress]
+	for _, destination := range []string{"169.254.1.1", "169.254.169.254", "fe80::1", "febf:ffff::1"} {
+		t.Run(destination, func(t *testing.T) {
+			address := netip.MustParseAddr(destination)
+			var packet []byte
+			if address.Is4() {
+				packet = testIPv4TCPPacket(netip.MustParseAddr("192.0.2.10"), address, 54040, 443)
+			} else {
+				packet = testIPv6TCPPacket(netip.MustParseAddr("2001:db8::10"), address, 54040, 443, nil)
+			}
+			action, output := runSharedNetworkProgram(t, ingress, packet)
+			if action != testTCActUnspec || string(output) != string(packet) {
+				t.Fatalf("link-local packet was captured: action=%d", action)
+			}
+		})
+	}
+	for _, destination := range []string{"169.254.1.1", "169.254.169.254"} {
+		packet := testIPv4UDPDatagram(netip.MustParseAddr("192.0.2.10"), netip.MustParseAddr(destination), 54041, 443, true)
+		action, output := runSharedNetworkProgram(t, ingress, packet)
+		if action != testTCActUnspec || string(output) != string(packet) {
+			t.Fatalf("link-local UDP packet was captured: destination=%s action=%d", destination, action)
+		}
+	}
+	for _, destination := range []string{"169.253.1.1", "169.255.1.1", "192.168.1.1", "fc00::1", "fec0::1"} {
+		t.Run("capture_"+destination, func(t *testing.T) {
+			address := netip.MustParseAddr(destination)
+			var packet []byte
+			if address.Is4() {
+				packet = testIPv4TCPPacket(netip.MustParseAddr("192.0.2.10"), address, 54042, 443)
+			} else {
+				packet = testIPv6TCPPacket(netip.MustParseAddr("2001:db8::10"), address, 54042, 443, nil)
+			}
+			action, _ := runSharedNetworkProgram(t, ingress, packet)
+			if action != testTCActOK {
+				t.Fatalf("ordinary destination was unexpectedly bypassed: action=%d", action)
+			}
+		})
+	}
+	for _, mode := range []DNSMode{DNSModeRespectPolicy, DNSModeHijack} {
+		backend.control.DNSMode = mode
+		if err := backend.updateControl(); err != nil {
+			t.Fatal(err)
+		}
+		for _, destination := range []string{"169.254.169.254", "fe80::1"} {
+			address := netip.MustParseAddr(destination)
+			var packet []byte
+			if address.Is4() {
+				packet = testIPv4TCPPacket(netip.MustParseAddr("192.0.2.10"), address, 54043, 53)
+			} else {
+				packet = testIPv6TCPPacket(netip.MustParseAddr("2001:db8::10"), address, 54043, 53, nil)
+			}
+			action, _ := runSharedNetworkProgram(t, ingress, packet)
+			if action != testTCActOK {
+				t.Fatalf("DNS interception priority changed: destination=%s mode=%d action=%d", destination, mode, action)
+			}
+		}
+	}
+}
+
 func runSharedNetworkProgram(t *testing.T, program *CiliumEBPF.Program, packet []byte) (uint32, []byte) {
 	t.Helper()
 	output := make([]byte, len(packet)+256)

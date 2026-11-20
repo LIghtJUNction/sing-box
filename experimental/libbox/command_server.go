@@ -2,13 +2,10 @@ package libbox
 
 import (
 	"context"
-	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
-	"syscall"
-	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
@@ -57,7 +54,6 @@ func NewCommandServer(handler CommandServerHandler, platformInterface PlatformIn
 	service.MustRegister[*powerreport.Manager](ctx, powerManager)
 	platformWrapper := &platformInterfaceWrapper{
 		iif:          platformInterface,
-		useProcFS:    platformInterface.UseProcFS(),
 		powerManager: powerManager,
 	}
 	service.MustRegister[adapter.PlatformInterface](ctx, platformWrapper)
@@ -145,19 +141,10 @@ func (s *CommandServer) Start() error {
 	if sCommandServerListenPort == 0 {
 		sockPath := filepath.Join(sBasePath, "command.sock")
 		os.Remove(sockPath)
-		for range 30 {
-			listener, err = net.ListenUnix("unix", &net.UnixAddr{
-				Name: sockPath,
-				Net:  "unix",
-			})
-			if err == nil {
-				break
-			}
-			if !errors.Is(err, syscall.EROFS) {
-				break
-			}
-			time.Sleep(time.Second)
-		}
+		listener, err = net.ListenUnix("unix", &net.UnixAddr{
+			Name: sockPath,
+			Net:  "unix",
+		})
 		if err != nil {
 			return E.Cause(err, "listen command server")
 		}
@@ -236,6 +223,10 @@ func (s *CommandServer) SetError(message string) {
 }
 
 func (s *CommandServer) NeedWIFIState() bool {
+	// lx: early-rpc-guard — Ready() вместо Box() != nil, SPECS/TASKS/047
+	if !s.StartedService.Ready() {
+		return false
+	}
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.Box() == nil {
 		return false
@@ -244,6 +235,10 @@ func (s *CommandServer) NeedWIFIState() bool {
 }
 
 func (s *CommandServer) NeedFindProcess() bool {
+	// lx: early-rpc-guard — Ready() вместо Box() != nil, SPECS/TASKS/047
+	if !s.StartedService.Ready() {
+		return false
+	}
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.Box() == nil {
 		return false
@@ -299,14 +294,13 @@ func (s *CommandServer) RecordScreenState(on bool) {
 	}
 }
 
-func (s *CommandServer) RecordLockState(locked bool) {
-	recorder := s.powerManager.Recorder()
-	if recorder != nil {
-		recorder.RecordLockState(locked)
-	}
-}
-
 func (s *CommandServer) ResetNetwork() {
+	// lx: early-rpc-guard — Ready() вместо Box() != nil, SPECS/TASKS/047.
+	// Box() перестаёт быть nil при создании box, а поля NetworkManager
+	// присваиваются только на StartStateInitialize — окно паники.
+	if !s.StartedService.Ready() {
+		return
+	}
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.Box() == nil {
 		return
@@ -315,6 +309,10 @@ func (s *CommandServer) ResetNetwork() {
 }
 
 func (s *CommandServer) UpdateWIFIState() {
+	// lx: early-rpc-guard — Ready() вместо Box() != nil, SPECS/TASKS/047
+	if !s.StartedService.Ready() {
+		return
+	}
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.Box() == nil {
 		return

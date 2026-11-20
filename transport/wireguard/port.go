@@ -11,11 +11,19 @@ import (
 )
 
 func (e *Endpoint) PortAddresses() (netip.Addr, netip.Addr) {
-	return e.tunDevice.Inet4Address(), e.tunDevice.Inet6Address()
+	// lx: SPEC 020 level 3 — served from the cached copy, not the tun device: the
+	// L3 layer (sing-tun preferred routes) may ask at any moment, including while
+	// the endpoint is torn down (tunDevice == nil). The addresses are static
+	// config anyway (options.Address), cached at construction and on rebuild.
+	return e.inet4Address, e.inet6Address
 }
 
 func (e *Endpoint) PortMTU() uint32 {
 	return e.options.MTU
+}
+
+func (e *Endpoint) UpstreamPort() any {
+	return e.tunDevice
 }
 
 func (e *Endpoint) WritePackets(packets [][]byte) error {
@@ -73,7 +81,7 @@ func (e *Endpoint) WritePackets(packets [][]byte) error {
 		} else {
 			source = e.tunDevice.Inet6Address()
 		}
-		reply, replyOk := tun.BuildUnreachable(packet, source, state.headroom)
+		reply, replyOk := tun.BuildICMPError(packet, tun.ICMPErrorNoRoute, source, 0, state.headroom)
 		if replyOk {
 			replies = append(replies, reply)
 		}

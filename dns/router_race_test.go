@@ -31,11 +31,7 @@ type fakeDNSTransport struct {
 	firstQueried time.Time
 }
 
-func (t *fakeDNSTransport) Start(stage adapter.StartStage) error {
-	return nil
-}
-
-func (t *fakeDNSTransport) Close() error {
+func (t *fakeDNSTransport) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	return nil
 }
 
@@ -50,6 +46,13 @@ func (t *fakeDNSTransport) Tag() string {
 func (t *fakeDNSTransport) Dependencies() []string {
 	return nil
 }
+
+// lx:begin lx_command
+func (t *fakeDNSTransport) OutboundTag() string {
+	return ""
+}
+
+// lx:end lx_command
 
 func (t *fakeDNSTransport) Reset() {
 }
@@ -90,11 +93,7 @@ type fakeDNSTransportManager struct {
 	defaultTransport adapter.DNSTransport
 }
 
-func (m *fakeDNSTransportManager) Start(stage adapter.StartStage) error {
-	return nil
-}
-
-func (m *fakeDNSTransportManager) Close() error {
+func (m *fakeDNSTransportManager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	return nil
 }
 
@@ -112,10 +111,6 @@ func (m *fakeDNSTransportManager) Default() adapter.DNSTransport {
 }
 
 func (m *fakeDNSTransportManager) FakeIP() adapter.FakeIPTransport {
-	return nil
-}
-
-func (m *fakeDNSTransportManager) Remove(tag string) error {
 	return nil
 }
 

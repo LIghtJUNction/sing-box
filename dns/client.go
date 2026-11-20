@@ -12,6 +12,8 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/compatible"
+	"github.com/sagernet/sing-box/common/dnstrack"
+	"github.com/sagernet/sing-box/common/interrupt"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -48,7 +50,7 @@ type Client struct {
 	networkManager    adapter.NetworkManager
 	logger            logger.ContextLogger
 	cache             *freelru.Cache[dnsCacheKey, *dns.Msg]
-	cacheLock         compatible.Map[dnsCacheKey, chan struct{}]
+	cacheLock         compatible.Map[dnsExchangeKey, chan struct{}]
 	backgroundRefresh compatible.Map[dnsCacheKey, struct{}]
 }
 
@@ -93,6 +95,11 @@ type dnsCacheKey struct {
 	transportTag string
 	clientSubnet netip.Prefix
 	environment  uint64
+}
+
+type dnsExchangeKey struct {
+	dnsCacheKey
+	timeout time.Duration
 }
 
 func (k dnsCacheKey) persistentName() string {
@@ -251,6 +258,10 @@ func (o *exchangeOperation) release() {
 }
 
 func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool, allowWait bool) (*exchangeOperation, *dns.Msg, exchangeStatus, error) {
+	err := ctx.Err()
+	if err != nil {
+		return nil, nil, exchangeDone, err
+	}
 	if len(message.Question) == 0 {
 		if c.logger != nil {
 			c.logger.WarnContext(ctx, "bad question size: ", len(message.Question))
@@ -286,8 +297,37 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 	if !disableCache {
 		cacheKey := c.newCacheKey(transport, question, message, options)
 		operation.cacheKey = cacheKey
-		cond, loaded := c.cacheLock.LoadOrStore(cacheKey, make(chan struct{}))
-		if loaded {
+		exchangeKey := dnsExchangeKey{dnsCacheKey: cacheKey, timeout: options.Timeout}
+		cond, loaded := c.cacheLock.LoadOrStore(exchangeKey, make(chan struct{}))
+		if !loaded {
+			operation.releaseCond = func() {
+				c.cacheLock.Delete(exchangeKey)
+				close(cond)
+			}
+		}
+		for {
+			response, ttl, isStale := c.loadResponse(cacheKey)
+			if response != nil && (!isStale || !options.DisableOptimisticCache) {
+				operation.release()
+				if isStale {
+					c.backgroundRefreshDNS(transport, cacheKey, message.Copy(), options, responseChecker)
+				}
+				if responseChecker != nil && !responseChecker(response) {
+					logRejectedResponse(c.logger, ctx, response)
+					emitFailedQuery(ctx, transport, question, int32(response.Rcode), "rejected (cached)") // lx: SPEC 018
+					return nil, nil, exchangeDone, ErrResponseRejectedCached
+				}
+				if isStale {
+					logOptimisticResponse(c.logger, ctx, transport, response)
+				} else {
+					logCachedResponse(c.logger, ctx, transport, response, ttl)
+				}
+				response.Id = message.Id
+				return nil, response, exchangeDone, nil
+			}
+			if !loaded {
+				break
+			}
 			if !allowWait {
 				return nil, nil, exchangeWait, nil
 			}
@@ -296,40 +336,30 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 			case <-ctx.Done():
 				return nil, nil, exchangeDone, ctx.Err()
 			}
+			err = ctx.Err()
+			if err != nil {
+				return nil, nil, exchangeDone, err
+			}
 			cacheKey = c.newCacheKey(transport, question, message, options)
 			operation.cacheKey = cacheKey
-		} else {
-			operation.releaseCond = func() {
-				c.cacheLock.Delete(cacheKey)
-				close(cond)
-			}
-		}
-		response, ttl, isStale := c.loadResponse(cacheKey)
-		if response != nil {
-			if isStale && !options.DisableOptimisticCache {
-				c.backgroundRefreshDNS(transport, cacheKey, message.Copy(), options, responseChecker)
-				logOptimisticResponse(c.logger, ctx, response)
-				response.Id = message.Id
-				operation.release()
-				return nil, response, exchangeDone, nil
-			} else if !isStale {
-				logCachedResponse(c.logger, ctx, response, ttl)
-				response.Id = message.Id
-				operation.release()
-				return nil, response, exchangeDone, nil
-			}
+			loaded = false
 		}
 	}
 
 	contextTransport, transportTagLoaded := adapter.DNSTransportTagFromContext(ctx)
 	if transportTagLoaded && transport.Tag() == contextTransport {
+		emitFailedQuery(ctx, transport, question, dnstrack.RcodeNoAnswer, "loopback") // lx: SPEC 018
 		operation.release()
 		return nil, nil, exchangeDone, E.New("DNS query loopback in transport[", contextTransport, "]")
 	}
-	operation.ctx = adapter.ContextWithDNSTransportTag(ctx, transport.Tag())
+	operation.ctx = adapter.ContextWithDNSTransportTag(interrupt.ContextWithIsExternalConnection(ctx, false), transport.Tag())
+	if transport.Type() == C.DNSTypeGroup { // lx: SPEC 035 — preserve answering-member attribution.
+		operation.ctx = dnstrack.WithQueryTraceIfTracking(operation.ctx)
+	}
 	if !disableCache && responseChecker != nil && c.rdrc != nil {
 		rejected := c.rdrc.LoadRDRC(transport.Tag(), question.Name, question.Qtype)
 		if rejected {
+			emitFailedQuery(ctx, transport, question, dnstrack.RcodeNoAnswer, "rejected (cached)") // lx: SPEC 018
 			operation.release()
 			return nil, nil, exchangeDone, ErrResponseRejectedCached
 		}
@@ -353,6 +383,7 @@ func (c *Client) finishExchange(transport adapter.DNSTransport, operation *excha
 				c.rdrc.SaveRDRCAsync(transport.Tag(), question.Name, question.Qtype, c.logger)
 			}
 			logRejectedResponse(c.logger, ctx, response)
+			emitFailedQuery(ctx, transport, question, int32(response.Rcode), "rejected") // lx: SPEC 018 (SERVFAIL / checker)
 			return response, ErrResponseRejected
 		}
 	}
@@ -374,37 +405,52 @@ func (c *Client) finishExchange(transport adapter.DNSTransport, operation *excha
 			response.SetEdns0(responseEDNSOpt.UDPSize(), responseEDNSOpt.Do())
 		}
 	}
-	logExchangedResponse(c.logger, ctx, response, timeToLive)
+	logExchangedResponse(c.logger, ctx, transport, response, timeToLive) // lx: SPEC 018 (transport arg)
 	return response, nil
 }
 
 func (c *Client) Exchange(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) (*dns.Msg, error) {
+	if options.Timeout == 0 {
+		options.Timeout = c.timeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, options.Timeout)
+	defer cancel()
 	operation, earlyResponse, status, err := c.beginExchange(ctx, transport, message, options, responseChecker, true)
 	if status != exchangeReady {
 		return earlyResponse, err
 	}
 	defer operation.release()
-	response, err := c.exchangeToTransport(operation.ctx, transport, operation.message, options.Timeout)
+	response, err := c.exchangeToTransport(operation.ctx, transport, operation.message)
 	if err != nil {
+		emitFailedQuery(operation.ctx, transport, operation.question, dnstrack.RcodeNoAnswer, err.Error()) // lx: SPEC 018 (timeout / network)
 		return nil, err
 	}
 	return c.finishExchange(transport, operation, response)
 }
 
 func (c *Client) ExchangeAsync(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool, callback func(response *dns.Msg, err error)) {
+	if options.Timeout == 0 {
+		options.Timeout = c.timeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, options.Timeout)
 	operation, earlyResponse, status, err := c.beginExchange(ctx, transport, message, options, responseChecker, false)
 	switch status {
 	case exchangeDone:
+		cancel()
 		callback(earlyResponse, err)
 		return
 	case exchangeWait:
 		go func() {
-			callback(c.Exchange(ctx, transport, message, options, responseChecker))
+			response, exchangeErr := c.Exchange(ctx, transport, message, options, responseChecker)
+			cancel()
+			callback(response, exchangeErr)
 		}()
 		return
 	}
 	finish := func(response *dns.Msg, exchangeErr error) {
+		cancel()
 		if exchangeErr != nil {
+			emitFailedQuery(operation.ctx, transport, operation.question, dnstrack.RcodeNoAnswer, exchangeErr.Error()) // lx: SPEC 018 (timeout / network)
 			operation.release()
 			callback(nil, exchangeErr)
 			return
@@ -413,7 +459,7 @@ func (c *Client) ExchangeAsync(ctx context.Context, transport adapter.DNSTranspo
 		operation.release()
 		callback(finishedResponse, finishErr)
 	}
-	c.exchangeToTransportAsync(operation.ctx, transport, operation.message, options.Timeout, finish)
+	c.exchangeToTransportAsync(operation.ctx, transport, operation.message, finish)
 }
 
 func (c *Client) Lookup(ctx context.Context, transport adapter.DNSTransport, domain string, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) ([]netip.Addr, error) {
@@ -535,7 +581,7 @@ func (c *Client) lookupToExchange(ctx context.Context, transport adapter.DNSTran
 func (c *Client) questionCache(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) ([]netip.Addr, error) {
 	question := message.Question[0]
 	cacheKey := c.newCacheKey(transport, question, message, options)
-	response, _, isStale := c.loadResponse(cacheKey)
+	response, ttl, isStale := c.loadResponse(cacheKey) // lx: ttl нужен ветке fresh-hit ниже (SPEC 022 #3)
 	if response == nil {
 		return nil, ErrNotCached
 	}
@@ -544,7 +590,17 @@ func (c *Client) questionCache(ctx context.Context, transport adapter.DNSTranspo
 			return nil, ErrNotCached
 		}
 		c.backgroundRefreshDNS(transport, cacheKey, c.prepareExchangeMessage(message.Copy(), options), options, responseChecker)
-		logOptimisticResponse(c.logger, ctx, response)
+	}
+	if responseChecker != nil && !responseChecker(response) {
+		logRejectedResponse(c.logger, ctx, response)
+		emitFailedQuery(ctx, transport, question, int32(response.Rcode), "rejected (cached)") // lx: SPEC 018
+		return nil, ErrResponseRejectedCached
+	}
+	if isStale {
+		logOptimisticResponse(c.logger, ctx, transport, response)
+	} else {
+		// lx: SPEC 022 — fresh Lookup hits still emit SourceCached.
+		logCachedResponse(c.logger, ctx, transport, response, ttl)
 	}
 	if response.Rcode != dns.RcodeSuccess {
 		return nil, RcodeError(response.Rcode)
@@ -644,8 +700,14 @@ func (c *Client) backgroundRefreshDNS(transport adapter.DNSTransport, key dnsCac
 	}
 	go func() {
 		defer c.backgroundRefresh.Delete(key)
+		timeout := options.Timeout
+		if timeout == 0 {
+			timeout = c.timeout
+		}
 		ctx := adapter.ContextWithDNSTransportTag(c.ctx, transport.Tag())
-		response, err := c.exchangeToTransport(ctx, transport, message, options.Timeout)
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		response, err := c.exchangeToTransport(ctx, transport, message)
 		if err != nil {
 			if c.logger != nil {
 				c.logger.DebugContext(ctx, "optimistic refresh failed for ", FqdnToDomain(key.Name), ": ", err)
@@ -677,7 +739,7 @@ func (c *Client) backgroundRefreshDNS(transport adapter.DNSTransport, key dnsCac
 		}
 		timeToLive := applyResponseOptions(key.Question, response, options)
 		c.storeCache(storeKey, response, timeToLive)
-		logRefreshedResponse(c.logger, ctx, response, timeToLive)
+		logRefreshedResponse(c.logger, ctx, transport, response, timeToLive) // lx: SPEC 018 (transport arg)
 	}()
 }
 
@@ -707,12 +769,7 @@ func stripDNSPadding(response *dns.Msg) {
 	}
 }
 
-func (c *Client) exchangeToTransport(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, timeout time.Duration) (*dns.Msg, error) {
-	if timeout == 0 {
-		timeout = c.timeout
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+func (c *Client) exchangeToTransport(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg) (*dns.Msg, error) {
 	response, err := transport.Exchange(ctx, message)
 	if err == nil {
 		stripDNSPadding(response)
@@ -725,13 +782,8 @@ func (c *Client) exchangeToTransport(ctx context.Context, transport adapter.DNST
 	return nil, err
 }
 
-func (c *Client) exchangeToTransportAsync(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, timeout time.Duration, callback func(response *dns.Msg, err error)) {
-	if timeout == 0 {
-		timeout = c.timeout
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+func (c *Client) exchangeToTransportAsync(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, callback func(response *dns.Msg, err error)) {
 	transport.ExchangeAsync(ctx, message, func(response *dns.Msg, err error) {
-		cancel()
 		if err == nil {
 			stripDNSPadding(response)
 			callback(response, nil)

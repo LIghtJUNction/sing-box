@@ -193,6 +193,20 @@ func makeUDPFlowKey(original originalDestinationValue) udpFlowKey {
 }
 
 func originalDestinationFromValue(original originalDestinationValue) (OriginalDestination, error) {
+	// Adapted from tunless decodeOriginalRecord/decodeOriginalProtocol;
+	// copyright (c) 2026 tunless contributors, MIT (see TUNLESS-LICENSE).
+	if original.Protocol != ProtocolTCP && original.Protocol != ProtocolUDP {
+		return OriginalDestination{}, E.New("invalid original destination protocol: ", original.Protocol)
+	}
+	if original.Port == 0 {
+		return OriginalDestination{}, E.New("invalid original destination port")
+	}
+	if original.Flags&^uint8(originalDestinationFlagConnectedUDP) != 0 {
+		return OriginalDestination{}, E.New("invalid original destination flags: ", original.Flags)
+	}
+	if original.Flags&originalDestinationFlagConnectedUDP != 0 && original.Protocol != ProtocolUDP {
+		return OriginalDestination{}, E.New("connected flag requires a UDP original destination")
+	}
 	var address netip.Addr
 	switch original.Family {
 	case addressFamilyIPv4:
@@ -206,6 +220,13 @@ func originalDestinationFromValue(original originalDestinationValue) (OriginalDe
 		Destination:  netip.AddrPortFrom(address.Unmap(), original.Port),
 		ConnectedUDP: original.Flags&originalDestinationFlagConnectedUDP != 0,
 	}, nil
+}
+
+func originalDestinationFromValueForProtocol(original originalDestinationValue, protocol uint8) (OriginalDestination, error) {
+	if original.Protocol != protocol {
+		return OriginalDestination{}, E.New("original destination protocol mismatch: expected ", protocol, ", got ", original.Protocol)
+	}
+	return originalDestinationFromValue(original)
 }
 
 func originalDestinationFromUDPPeer(cookie uint64, peer udpPeerValue) (originalDestinationValue, error) {

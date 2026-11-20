@@ -1,0 +1,2 @@
+command: ["/tmp/lmm-payment-tools/go/bin/go", "vet", "-mod=readonly", "-p=2", "./route", "./dns", "./transport/wireguard"]
+exit_code: 0

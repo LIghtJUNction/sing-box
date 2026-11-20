@@ -31,7 +31,6 @@ var oomReportProfiles = []string{
 type oomReportMetadata struct {
 	reportMetadata
 	RecordedAt      string `json:"recordedAt"`
-	EndedAt         string `json:"endedAt,omitempty"`
 	MemoryLimit     string `json:"memoryLimit,omitempty"`
 	MemoryUsage     string `json:"memoryUsage"`
 	AvailableMemory string `json:"availableMemory,omitempty"`
@@ -51,9 +50,6 @@ func OOMRecorderOptions(startedService *daemon.StartedService) oomkiller.Recorde
 				Snapshots:      status.Snapshots,
 			}
 			metadata.StartedAt = status.StartedAt.UTC().Format(time.RFC3339)
-			if !status.EndedAt.IsZero() {
-				metadata.EndedAt = status.EndedAt.UTC().Format(time.RFC3339)
-			}
 			if status.MemoryLimit > 0 {
 				metadata.MemoryLimit = byteformats.FormatMemoryBytes(status.MemoryLimit)
 			}
@@ -62,7 +58,17 @@ func OOMRecorderOptions(startedService *daemon.StartedService) oomkiller.Recorde
 			}
 			return metadata
 		},
-		OwnerCallback: chownReport,
+		OwnerCallback: func(path string) {
+			// lx:begin report-rotation
+			// The recorder chowns the archive directory right before it creates a new
+			// report inside it (Recorder.WriteReport) — the one moment to cap the archive
+			// (SPEC 039: upstream never deletes reports).
+			if filepath.Clean(path) == filepath.Join(sWorkingPath, oomkiller.ReportsDirectoryName) {
+				pruneReports(path, maxReportCount, maxReportBytes)
+			}
+			// lx:end
+			chownReport(path)
+		},
 		LogCallback: func() []byte {
 			return formatLogEntries(startedService.SavedLog())
 		},
@@ -250,9 +256,11 @@ func writeOOMProfile(filePath string, name string) {
 }
 
 func PromoteOOMDraft() {
-	oomkiller.PromoteDraft(sWorkingPath, acceptOOMDraft)
+	PromoteOOMDraftAt(sWorkingPath)
 }
 
 func PromoteOOMDraftAt(workingPath string) {
 	oomkiller.PromoteDraft(workingPath, acceptOOMDraft)
+	// lx: SPEC 039 — a promoted draft is a new archive entry too; keep the cap.
+	pruneReports(filepath.Join(workingPath, oomkiller.ReportsDirectoryName), maxReportCount, maxReportBytes)
 }

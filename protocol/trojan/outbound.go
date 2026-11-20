@@ -64,11 +64,20 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 			Options:       common.PtrValueOrDefault(options.TLS),
 			KTLSCompatible: common.PtrValueOrDefault(options.Transport).Type == "" &&
 				!common.PtrValueOrDefault(options.Multiplex).Enabled,
+			// lx: SPEC 060 — see the vless outbound.
+			DialedThroughDetour: tls.DialedThroughDetour(options.DialerOptions),
 		})
 		if err != nil {
 			return nil, err
 		}
-		outbound.tlsDialer = tls.NewDialer(outboundDialer, outbound.tlsConfig)
+		// lx:begin tls-disabled-dialer
+		// NewClientWithOptions returns (nil, nil) for `"tls": {"enabled": false}`;
+		// an unconditional NewDialer here wraps that nil config and SIGSEGVs on the
+		// first handshake (SPEC 045). Same guard as vmess.
+		if outbound.tlsConfig != nil {
+			outbound.tlsDialer = tls.NewDialer(outboundDialer, outbound.tlsConfig)
+		}
+		// lx:end tls-disabled-dialer
 	}
 	if options.Transport != nil {
 		outbound.transport, err = v2ray.NewClientTransport(ctx, outbound.dialer, outbound.serverAddr, common.PtrValueOrDefault(options.Transport), outbound.tlsConfig)
@@ -150,8 +159,17 @@ func (h *Outbound) CloseIdleConnections() {
 	}
 }
 
-func (h *Outbound) Close() error {
-	return common.Close(common.PtrOrNil(h.multiplexDialer), h.transport)
+func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage != adapter.StartStateInitialize {
+		return nil
+	}
+	if h.transport != nil {
+		scope.Add(h.transport.Close)
+	}
+	if h.multiplexDialer != nil {
+		scope.Add(h.multiplexDialer.Close)
+	}
+	return nil
 }
 
 type trojanDialer Outbound

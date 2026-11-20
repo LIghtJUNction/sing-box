@@ -129,10 +129,31 @@ func (r *Router) Initialize(rules []option.DNSRule) error {
 	return nil
 }
 
-func (r *Router) Start(stage adapter.StartStage) error {
+// lx:begin lx_command
+// Rules exposes the live DNS rule table for the SPEC 014 GetRules command RPC
+// (adapter.DNSRouter has no rule getter upstream — see adapter/dns.go). Read under
+// rulesAccess because Start/Close swap r.rules under the same lock.
+func (r *Router) Rules() []adapter.DNSRule {
+	r.rulesAccess.RLock()
+	defer r.rulesAccess.RUnlock()
+	return r.rules
+}
+
+// lx:end lx_command
+
+func (r *Router) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	monitor := taskmonitor.New(r.logger, C.StartTimeout)
 	switch stage {
 	case adapter.StartStateStart:
+		scope.Add(func() error {
+			r.rulesAccess.Lock()
+			r.closing = true
+			runtimeRules := r.rules
+			r.rules = nil
+			r.rulesAccess.Unlock()
+			closeRules(runtimeRules)
+			return nil
+		})
 		monitor.Start("initialize DNS client")
 		r.client.Start()
 		monitor.Finish()
@@ -160,20 +181,6 @@ func (r *Router) Start(stage adapter.StartStage) error {
 			deprecated.Report(r.ctx, deprecated.OptionLegacyDNSRuleStrategy)
 		}
 	}
-	return nil
-}
-
-func (r *Router) Close() error {
-	r.rulesAccess.Lock()
-	if r.closing {
-		r.rulesAccess.Unlock()
-		return nil
-	}
-	r.closing = true
-	runtimeRules := r.rules
-	r.rules = nil
-	r.rulesAccess.Unlock()
-	closeRules(runtimeRules)
 	return nil
 }
 
@@ -1381,6 +1388,7 @@ func (r *Router) ClearCache() {
 	if r.platformInterface != nil {
 		r.platformInterface.ClearDNSCache()
 	}
+	service.FromContext[adapter.NetworkManager](r.ctx).FlushSystemDNSCache()
 	if r.dnsReverseMapping != nil {
 		r.dnsReverseMapping.Purge()
 	}

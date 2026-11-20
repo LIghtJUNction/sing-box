@@ -26,11 +26,18 @@ func init() {
 }
 
 func generateECHKeyPair(serverName string) error {
-	configPem, keyPem, err := tls.ECHKeygenDefault(serverName)
+	output, err := generateECHKeyPairOutput(serverName)
 	if err != nil {
 		return err
 	}
-	os.Stdout.WriteString(configPem)
-	os.Stdout.WriteString(keyPem)
-	return nil
+	_, err = os.Stdout.WriteString(output)
+	return err
+}
+
+func generateECHKeyPairOutput(serverName string) (string, error) {
+	configPem, keyPem, err := tls.ECHKeygenDefault(serverName)
+	if err != nil {
+		return "", err
+	}
+	return keyPem + configPem, nil
 }

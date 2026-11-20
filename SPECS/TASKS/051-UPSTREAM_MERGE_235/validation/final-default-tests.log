@@ -1,0 +1,158 @@
+?   	github.com/sagernet/sing-box	[no test files]
+ok  	github.com/sagernet/sing-box/adapter	(cached)
+?   	github.com/sagernet/sing-box/adapter/certificate	[no test files]
+ok  	github.com/sagernet/sing-box/adapter/endpoint	(cached)
+?   	github.com/sagernet/sing-box/adapter/inbound	[no test files]
+?   	github.com/sagernet/sing-box/adapter/outbound	[no test files]
+?   	github.com/sagernet/sing-box/adapter/service	[no test files]
+?   	github.com/sagernet/sing-box/cmd/internal/app_store_connect	[no test files]
+?   	github.com/sagernet/sing-box/cmd/internal/build	[no test files]
+?   	github.com/sagernet/sing-box/cmd/internal/build_boxdd	[no test files]
+?   	github.com/sagernet/sing-box/cmd/internal/build_libbox	[no test files]
+?   	github.com/sagernet/sing-box/cmd/internal/build_shared	[no test files]
+?   	github.com/sagernet/sing-box/cmd/internal/format_docs	[no test files]
+ok  	github.com/sagernet/sing-box/cmd/internal/interception_bench	(cached)
+?   	github.com/sagernet/sing-box/cmd/internal/merge_aar	[no test files]
+?   	github.com/sagernet/sing-box/cmd/internal/merge_apple_xcframework	[no test files]
+?   	github.com/sagernet/sing-box/cmd/internal/protogen	[no test files]
+?   	github.com/sagernet/sing-box/cmd/internal/read_tag	[no test files]
+?   	github.com/sagernet/sing-box/cmd/internal/update_android_version	[no test files]
+?   	github.com/sagernet/sing-box/cmd/internal/update_apple_version	[no test files]
+?   	github.com/sagernet/sing-box/cmd/internal/update_certificates	[no test files]
+?   	github.com/sagernet/sing-box/cmd/internal/update_desktop_version	[no test files]
+?   	github.com/sagernet/sing-box/cmd/sing-box	[no test files]
+ok  	github.com/sagernet/sing-box/common/badh2	(cached)
+?   	github.com/sagernet/sing-box/common/badhttp	[no test files]
+?   	github.com/sagernet/sing-box/common/badtls	[no test files]
+ok  	github.com/sagernet/sing-box/common/badversion	(cached)
+?   	github.com/sagernet/sing-box/common/certificate	[no test files]
+?   	github.com/sagernet/sing-box/common/compatible	[no test files]
+ok  	github.com/sagernet/sing-box/common/convertor/adguard	(cached)
+ok  	github.com/sagernet/sing-box/common/dialer	(cached)
+?   	github.com/sagernet/sing-box/common/dnstrack	[no test files]
+ok  	github.com/sagernet/sing-box/common/ebpf	(cached)
+?   	github.com/sagernet/sing-box/common/geoip	[no test files]
+ok  	github.com/sagernet/sing-box/common/geosite	(cached)
+ok  	github.com/sagernet/sing-box/common/httpclient	(cached)
+ok  	github.com/sagernet/sing-box/common/interrupt	(cached)
+?   	github.com/sagernet/sing-box/common/iponly	[no test files]
+?   	github.com/sagernet/sing-box/common/ipset	[no test files]
+?   	github.com/sagernet/sing-box/common/ja3	[no test files]
+?   	github.com/sagernet/sing-box/common/jni	[no test files]
+?   	github.com/sagernet/sing-box/common/kernelports	[no test files]
+?   	github.com/sagernet/sing-box/common/ktls	[no test files]
+?   	github.com/sagernet/sing-box/common/listener	[no test files]
+?   	github.com/sagernet/sing-box/common/mux	[no test files]
+ok  	github.com/sagernet/sing-box/common/netns	(cached) [no tests to run]
+?   	github.com/sagernet/sing-box/common/networkquality	[no test files]
+?   	github.com/sagernet/sing-box/common/pipelistener	[no test files]
+ok  	github.com/sagernet/sing-box/common/process	(cached)
+?   	github.com/sagernet/sing-box/common/proxybridge	[no test files]
+?   	github.com/sagernet/sing-box/common/redir	[no test files]
+?   	github.com/sagernet/sing-box/common/schannel	[no test files]
+?   	github.com/sagernet/sing-box/common/settings	[no test files]
+ok  	github.com/sagernet/sing-box/common/sniff	(cached)
+?   	github.com/sagernet/sing-box/common/sniff/internal/qtls	[no test files]
+ok  	github.com/sagernet/sing-box/common/srs	(cached)
+?   	github.com/sagernet/sing-box/common/stun	[no test files]
+?   	github.com/sagernet/sing-box/common/taskmonitor	[no test files]
+ok  	github.com/sagernet/sing-box/common/tls	(cached)
+ok  	github.com/sagernet/sing-box/common/tlsfragment	(cached)
+ok  	github.com/sagernet/sing-box/common/tlsspoof	(cached) [no tests to run]
+ok  	github.com/sagernet/sing-box/common/trafficcontrol	(cached)
+?   	github.com/sagernet/sing-box/common/uot	[no test files]
+?   	github.com/sagernet/sing-box/common/urltest	[no test files]
+ok  	github.com/sagernet/sing-box/common/windivert	(cached)
+?   	github.com/sagernet/sing-box/constant	[no test files]
+?   	github.com/sagernet/sing-box/constant/goos	[no test files]
+ok  	github.com/sagernet/sing-box/daemon	(cached)
+ok  	github.com/sagernet/sing-box/dns	0.964s
+ok  	github.com/sagernet/sing-box/dns/transport	(cached)
+?   	github.com/sagernet/sing-box/dns/transport/dhcp	[no test files]
+?   	github.com/sagernet/sing-box/dns/transport/fakeip	[no test files]
+ok  	github.com/sagernet/sing-box/dns/transport/group	(cached)
+ok  	github.com/sagernet/sing-box/dns/transport/hosts	(cached)
+?   	github.com/sagernet/sing-box/dns/transport/local	[no test files]
+?   	github.com/sagernet/sing-box/dns/transport/local/systemconfig	[no test files]
+?   	github.com/sagernet/sing-box/dns/transport/mdns	[no test files]
+?   	github.com/sagernet/sing-box/dns/transport/quic	[no test files]
+?   	github.com/sagernet/sing-box/experimental	[no test files]
+ok  	github.com/sagernet/sing-box/experimental/boxdd	0.010s
+?   	github.com/sagernet/sing-box/experimental/cachefile	[no test files]
+ok  	github.com/sagernet/sing-box/experimental/clashapi	(cached)
+?   	github.com/sagernet/sing-box/experimental/clashmode	[no test files]
+?   	github.com/sagernet/sing-box/experimental/deprecated	[no test files]
+ok  	github.com/sagernet/sing-box/experimental/libbox	(cached)
+?   	github.com/sagernet/sing-box/experimental/libbox/internal/oomprofile	[no test files]
+?   	github.com/sagernet/sing-box/experimental/libbox/internal/procfs	[no test files]
+?   	github.com/sagernet/sing-box/experimental/libbox/internal/runtimeinfo	[no test files]
+?   	github.com/sagernet/sing-box/experimental/locale	[no test files]
+?   	github.com/sagernet/sing-box/experimental/v2rayapi	[no test files]
+ok  	github.com/sagernet/sing-box/include	0.009s
+?   	github.com/sagernet/sing-box/log	[no test files]
+?   	github.com/sagernet/sing-box/lxd	[no test files]
+ok  	github.com/sagernet/sing-box/option	(cached)
+?   	github.com/sagernet/sing-box/protocol/anytls	[no test files]
+ok  	github.com/sagernet/sing-box/protocol/block	(cached)
+?   	github.com/sagernet/sing-box/protocol/bridge	[no test files]
+ok  	github.com/sagernet/sing-box/protocol/chain	(cached)
+?   	github.com/sagernet/sing-box/protocol/direct	[no test files]
+?   	github.com/sagernet/sing-box/protocol/dns	[no test files]
+ok  	github.com/sagernet/sing-box/protocol/group	(cached)
+?   	github.com/sagernet/sing-box/protocol/http	[no test files]
+?   	github.com/sagernet/sing-box/protocol/hysteria	[no test files]
+?   	github.com/sagernet/sing-box/protocol/hysteria2	[no test files]
+ok  	github.com/sagernet/sing-box/protocol/masque	(cached)
+?   	github.com/sagernet/sing-box/protocol/mixed	[no test files]
+?   	github.com/sagernet/sing-box/protocol/naive	[no test files]
+?   	github.com/sagernet/sing-box/protocol/naive/quic	[no test files]
+?   	github.com/sagernet/sing-box/protocol/openconnect	[no test files]
+?   	github.com/sagernet/sing-box/protocol/openvpn	[no test files]
+?   	github.com/sagernet/sing-box/protocol/redirect	[no test files]
+?   	github.com/sagernet/sing-box/protocol/shadowsocks	[no test files]
+?   	github.com/sagernet/sing-box/protocol/shadowtls	[no test files]
+?   	github.com/sagernet/sing-box/protocol/snell	[no test files]
+?   	github.com/sagernet/sing-box/protocol/socks	[no test files]
+?   	github.com/sagernet/sing-box/protocol/ssh	[no test files]
+?   	github.com/sagernet/sing-box/protocol/tailscale	[no test files]
+?   	github.com/sagernet/sing-box/protocol/tailscale/tailssh	[no test files]
+?   	github.com/sagernet/sing-box/protocol/tor	[no test files]
+ok  	github.com/sagernet/sing-box/protocol/trojan	(cached)
+?   	github.com/sagernet/sing-box/protocol/tuic	[no test files]
+?   	github.com/sagernet/sing-box/protocol/tun	[no test files]
+ok  	github.com/sagernet/sing-box/protocol/vless	(cached)
+?   	github.com/sagernet/sing-box/protocol/vless/encryption	[no test files]
+?   	github.com/sagernet/sing-box/protocol/vmess	[no test files]
+ok  	github.com/sagernet/sing-box/protocol/wireguard	0.008s
+ok  	github.com/sagernet/sing-box/route	(cached)
+ok  	github.com/sagernet/sing-box/route/rule	(cached)
+?   	github.com/sagernet/sing-box/schema	[no test files]
+?   	github.com/sagernet/sing-box/service/acme	[no test files]
+?   	github.com/sagernet/sing-box/service/api	[no test files]
+?   	github.com/sagernet/sing-box/service/ccm	[no test files]
+?   	github.com/sagernet/sing-box/service/ocm	[no test files]
+?   	github.com/sagernet/sing-box/service/oomkiller	[no test files]
+?   	github.com/sagernet/sing-box/service/origin_ca	[no test files]
+?   	github.com/sagernet/sing-box/service/powerreport	[no test files]
+?   	github.com/sagernet/sing-box/service/resolved	[no test files]
+?   	github.com/sagernet/sing-box/service/ssmapi	[no test files]
+?   	github.com/sagernet/sing-box/service/usbip	[no test files]
+?   	github.com/sagernet/sing-box/transport/device	[no test files]
+?   	github.com/sagernet/sing-box/transport/http	[no test files]
+ok  	github.com/sagernet/sing-box/transport/masque	(cached)
+ok  	github.com/sagernet/sing-box/transport/masque/connectip	(cached)
+?   	github.com/sagernet/sing-box/transport/openconnect	[no test files]
+?   	github.com/sagernet/sing-box/transport/openvpn	[no test files]
+?   	github.com/sagernet/sing-box/transport/simple-obfs	[no test files]
+?   	github.com/sagernet/sing-box/transport/sip003	[no test files]
+?   	github.com/sagernet/sing-box/transport/trojan	[no test files]
+ok  	github.com/sagernet/sing-box/transport/v2ray	(cached)
+?   	github.com/sagernet/sing-box/transport/v2raygrpc	[no test files]
+?   	github.com/sagernet/sing-box/transport/v2raygrpc/credentials	[no test files]
+ok  	github.com/sagernet/sing-box/transport/v2raygrpclite	(cached)
+ok  	github.com/sagernet/sing-box/transport/v2rayhttp	(cached)
+?   	github.com/sagernet/sing-box/transport/v2rayhttpupgrade	[no test files]
+?   	github.com/sagernet/sing-box/transport/v2rayquic	[no test files]
+ok  	github.com/sagernet/sing-box/transport/v2raywebsocket	(cached)
+ok  	github.com/sagernet/sing-box/transport/v2rayxhttp	(cached)
+ok  	github.com/sagernet/sing-box/transport/wireguard	0.926s

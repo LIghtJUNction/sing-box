@@ -1,0 +1,5 @@
+command: ["/tmp/lmm-payment-tools/go/bin/go", "test", "-mod=readonly", "-p=2", "-race", "-ldflags=-checklinkname=0", "./route", "./dns", "./transport/wireguard", "-run", "Test(PacketHandshakeFailureReleasesConnections|FlowCloseDuringAttachDetachesEveryGroup|ResponseRejectionEmitsOneFailure_LX|ApplyPauseEventWithoutManager|ApplyPauseEventUsesCurrentStateWithoutDevice|OnPauseUpdatedNeverBlocks|PauseEventsLatestWins|PauseEventInvalidatedByShutdownStamp|CloseAndTeardownBumpPauseStamp|OnPauseUpdated_wakeSkipsSuspendedDevice|OnDemandWakePreservesProtocolSuspension)$", "-count=1", "-timeout=60s"]
+ok  	github.com/sagernet/sing-box/route	1.016s
+ok  	github.com/sagernet/sing-box/dns	1.020s
+ok  	github.com/sagernet/sing-box/transport/wireguard	1.427s
+exit_code: 0
