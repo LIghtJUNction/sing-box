@@ -19,6 +19,8 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/service/oomkiller"
+	"github.com/sagernet/sing-box/transport/device"
 	openconnecttransport "github.com/sagernet/sing-box/transport/openconnect"
 	"github.com/sagernet/sing-openconnect"
 	"github.com/sagernet/sing-tun"
@@ -44,26 +46,24 @@ var (
 
 type Endpoint struct {
 	endpointBase
-	loopContext             context.Context
-	cancelLoop              context.CancelFunc
-	dnsRouter               adapter.DNSRouter
-	client                  *openconnect.Client
-	device                  openconnecttransport.Device
-	onDemand                bool
-	server                  string
-	flavor                  string
-	stateAccess             sync.Mutex
-	state                   atomic.Pointer[clientState]
-	dnsTransportAccess      sync.Mutex
-	dnsTransport            *DNSTransport
-	deviceStarted           bool
-	readLoopDone            chan struct{}
-	statusAccess            sync.Mutex
-	statusUpdated           chan struct{}
-	terminalError           string
-	authFormLoopDone        chan struct{}
-	activeTransportLoopDone chan struct{}
-	hotpCounter             atomic.Uint64
+	loopContext        context.Context
+	cancelLoop         context.CancelFunc
+	dnsRouter          adapter.DNSRouter
+	client             *openconnect.Client
+	deviceOptions      *device.Options
+	device             device.Device
+	onDemand           bool
+	server             string
+	flavor             string
+	stateAccess        sync.Mutex
+	state              atomic.Pointer[clientState]
+	dnsTransportAccess sync.Mutex
+	dnsTransport       *DNSTransport
+	deviceStarted      bool
+	statusAccess       sync.Mutex
+	statusUpdated      chan struct{}
+	terminalError      string
+	hotpCounter        atomic.Uint64
 }
 
 type clientState struct {
@@ -111,6 +111,8 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 			Adapter: endpoint.NewAdapterWithDialerOptions(C.TypeOpenConnect, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions),
 			router:  router,
 			logger:  logger,
+			system:  options.System,
+			network: service.FromContext[adapter.NetworkManager](ctx),
 		},
 		loopContext:   loopContext,
 		cancelLoop:    cancelLoop,
@@ -123,9 +125,6 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	defer func() {
 		if success {
 			return
-		}
-		if openConnectEndpoint.device != nil {
-			_ = openConnectEndpoint.device.Close()
 		}
 		cancelLoop()
 	}()
@@ -163,28 +162,26 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		udpTimeout = time.Duration(options.UDPTimeout)
 	}
 	networkManager := service.FromContext[adapter.NetworkManager](ctx)
-	device, err := openconnecttransport.NewDevice(openconnecttransport.DeviceOptions{
-		Context:         ctx,
-		Logger:          logger,
-		System:          options.System,
-		Handler:         openConnectEndpoint,
-		UDPTimeout:      udpTimeout,
-		ICMPTimeout:     C.ICMPTimeout,
-		UDPMapping:      tun.NATMapping(options.UDPMapping),
-		UDPFiltering:    tun.NATFiltering(options.UDPFiltering),
-		UDPNATMax:       options.UDPNATMax,
-		InterfaceFinder: networkManager.InterfaceFinder(),
-		Name:            options.Name,
-		MTU:             openconnecttransport.DefaultMTU,
-		Configuration: openconnecttransport.Configuration{
+	openConnectEndpoint.deviceOptions = &device.Options{
+		Context:             ctx,
+		Logger:              logger,
+		System:              options.System,
+		Handler:             openConnectEndpoint,
+		UDPTimeout:          udpTimeout,
+		ICMPTimeout:         C.ICMPTimeout,
+		UDPMapping:          tun.NATMapping(options.UDPMapping),
+		UDPFiltering:        tun.NATFiltering(options.UDPFiltering),
+		UDPNATMax:           options.UDPNATMax,
+		InterfaceFinder:     networkManager.InterfaceFinder(),
+		Name:                options.Name,
+		NamePrefix:          "oc",
+		MTU:                 openconnecttransport.DefaultMTU,
+		PacketFrontHeadroom: openconnect.PacketHeadroom,
+		PacketRearHeadroom:  openconnect.PacketRearHeadroom,
+		Configuration: device.Configuration{
 			MTU: openconnecttransport.DefaultMTU,
 		},
-	})
-	if err != nil {
-		return nil, err
 	}
-	openConnectEndpoint.device = device
-	device.SetPacketWriter(openConnectEndpoint.writePacketBuffers)
 	clientOptions, err := openConnectEndpoint.buildClientOptions(options, outboundDialer)
 	if err != nil {
 		return nil, err
@@ -359,9 +356,9 @@ func (e *Endpoint) handleTunnelConfiguration(event openconnect.TunnelConfigurati
 	if err != nil {
 		return E.Cause(err, "build route set")
 	}
-	err = e.device.UpdateConfiguration(openconnecttransport.Configuration{
-		MTU:       configuration.MTU,
-		Addresses: configuration.Addresses,
+	err = e.device.UpdateConfiguration(device.Configuration{
+		MTU:     configuration.MTU,
+		Address: configuration.Addresses,
 	})
 	if err != nil {
 		return E.Cause(err, "update device configuration")
@@ -421,34 +418,68 @@ func (e *Endpoint) updateState(update func(state *clientState)) {
 	e.state.Store(&newState)
 }
 
-func (e *Endpoint) Start(stage adapter.StartStage) error {
-	if stage != adapter.StartStatePostStart {
-		return nil
+func (e *Endpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	switch stage {
+	case adapter.StartStateInitialize:
+		scope.Add(func() error {
+			e.notifyStatusUpdated()
+			return nil
+		})
+		scope.Add(func() error {
+			e.cancelLoop()
+			return nil
+		})
+		e.deviceOptions.MemoryPressure = oomkiller.MemoryPressure(e.loopContext)
+		tunnelDevice, err := device.New(*e.deviceOptions)
+		if err != nil {
+			return err
+		}
+		scope.Add(tunnelDevice.Close)
+		tunnelDevice.SetPacketWriter(e.writePacketBuffers)
+		e.device = tunnelDevice
+		e.deviceOptions = nil
+	case adapter.StartStatePostStart:
+		var loopGroup sync.WaitGroup
+		scope.Add(func() error {
+			loopGroup.Wait()
+			return nil
+		})
+		err := e.client.Start()
+		if err != nil {
+			return err
+		}
+		scope.Add(e.client.Close)
+		e.stateAccess.Lock()
+		e.updateState(func(state *clientState) {
+			state.started = true
+		})
+		e.stateAccess.Unlock()
+		scope.Add(func() error {
+			e.stateAccess.Lock()
+			e.updateState(func(state *clientState) {
+				state.started = false
+			})
+			e.stateAccess.Unlock()
+			return nil
+		})
+		loopGroup.Go(func() {
+			e.readLoop(scope.Context())
+		})
+		loopGroup.Go(func() {
+			e.watchAuthForms(scope.Context())
+		})
+		loopGroup.Go(func() {
+			e.watchActiveTransport(scope.Context())
+		})
 	}
-	err := e.client.Start()
-	if err != nil {
-		return err
-	}
-	e.stateAccess.Lock()
-	e.updateState(func(state *clientState) {
-		state.started = true
-	})
-	e.readLoopDone = make(chan struct{})
-	e.authFormLoopDone = make(chan struct{})
-	e.activeTransportLoopDone = make(chan struct{})
-	e.stateAccess.Unlock()
-	go e.readLoop()
-	go e.watchAuthForms()
-	go e.watchActiveTransport()
 	return nil
 }
 
-func (e *Endpoint) readLoop() {
-	defer close(e.readLoopDone)
+func (e *Endpoint) readLoop(ctx context.Context) {
 	for {
-		packetBuffers, err := e.client.ReadDataPackets(e.loopContext)
+		packetBuffers, err := e.client.ReadDataPackets(ctx)
 		if err != nil {
-			if E.IsClosedOrCanceled(err) || e.loopContext.Err() != nil {
+			if E.IsClosedOrCanceled(err) || ctx.Err() != nil {
 				return
 			}
 			e.logger.Error(E.Cause(err, "client terminated"))
@@ -466,30 +497,6 @@ func (e *Endpoint) readLoop() {
 	}
 }
 
-func (e *Endpoint) Close() error {
-	e.stateAccess.Lock()
-	e.updateState(func(state *clientState) {
-		state.started = false
-	})
-	readLoopDone := e.readLoopDone
-	authFormLoopDone := e.authFormLoopDone
-	activeTransportLoopDone := e.activeTransportLoopDone
-	e.stateAccess.Unlock()
-	e.cancelLoop()
-	err := E.Errors(e.client.Close(), e.device.Close())
-	if readLoopDone != nil {
-		<-readLoopDone
-	}
-	if authFormLoopDone != nil {
-		<-authFormLoopDone
-	}
-	if activeTransportLoopDone != nil {
-		<-activeTransportLoopDone
-	}
-	e.notifyStatusUpdated()
-	return err
-}
-
 func (e *Endpoint) InterfaceUpdated(ctx context.Context) {
 	e.client.RestartSession()
 }
@@ -499,7 +506,9 @@ func (e *Endpoint) OnDemand() bool {
 }
 
 func (e *Endpoint) SetKeepIdleConnections(keep bool) {
-	if !keep {
+	if keep {
+		e.client.Resume()
+	} else {
 		e.client.Suspend()
 	}
 }
@@ -549,6 +558,10 @@ func (e *Endpoint) PortMTU() uint32 {
 	return e.device.PortMTU()
 }
 
+func (e *Endpoint) UpstreamPort() any {
+	return e.device
+}
+
 func (e *Endpoint) AttachReturn(returnPath tun.Return) error {
 	return e.device.AttachReturn(returnPath)
 }
@@ -558,7 +571,7 @@ func (e *Endpoint) DetachReturn(returnPath tun.Return) error {
 }
 
 func (e *Endpoint) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
-	return judgeOpenConnectFlow(e.router, e.Tag(), e.Type(), e.state.Load().localAddresses, network, source, destination, firstPacket)
+	return e.judgeFlow(e.loopContext, e, e.state.Load().localAddresses, network, source, destination, firstPacket)
 }
 
 func (e *Endpoint) NewDNSPacket(payload []byte, source M.Socksaddr, destination M.Socksaddr, writer N.PacketWriter) {

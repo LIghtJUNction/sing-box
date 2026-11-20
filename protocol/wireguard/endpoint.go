@@ -16,6 +16,7 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/service/oomkiller"
 	"github.com/sagernet/sing-box/transport/wireguard"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
@@ -30,6 +31,7 @@ import (
 var (
 	_ adapter.OutboundWithPreferredRoutes = (*Endpoint)(nil)
 	_ adapter.InterfaceUpdateListener     = (*Endpoint)(nil)
+	_ adapter.OutboundWithMultiplex       = (*Endpoint)(nil)
 	_ adapter.OnDemandEndpoint            = (*Endpoint)(nil)
 	_ dialer.PacketDialerWithDestination  = (*Endpoint)(nil)
 	_ adapter.IdleSuspendable             = (*Endpoint)(nil) // lx: SPEC 020 idle-suspend
@@ -46,6 +48,8 @@ type Endpoint struct {
 	dnsRouter      adapter.DNSRouter
 	logger         logger.ContextLogger
 	localAddresses []netip.Prefix
+	system         bool
+	network        adapter.NetworkManager
 	endpoint       *wireguard.Endpoint
 	onDemand       bool
 	// lx: SPEC 029 — the outbound dialer, retained so Start can force its detour
@@ -70,7 +74,7 @@ type Endpoint struct {
 	// suspending would silently drop remote peers with no recovery.
 	listenMode bool
 	// torndown is true while the endpoint is at SPEC 020 level 3: asleep AND its
-	// device + gVisor netstack released. It coexists with idleAsleep (a torn-down
+	// device + userspace stack released. It coexists with idleAsleep (a torn-down
 	// endpoint is still "asleep by idle"); the difference is the wake path —
 	// rebuild instead of Up. sleepSince is the unix-nano moment it fell asleep,
 	// the clock lx_idle_teardown counts from (NOT the dial clock: the teardown
@@ -106,6 +110,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		dnsRouter:      service.FromContext[adapter.DNSRouter](ctx),
 		logger:         logger,
 		localAddresses: options.Address,
+		system:         options.System,
 		onDemand:       options.OnDemand,
 		listenMode:     options.ListenPort != 0, // lx: SPEC 020 — no dial path, never idle-suspend
 	}
@@ -131,6 +136,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		udpTimeout = C.UDPTimeout
 	}
 	networkManager := service.FromContext[adapter.NetworkManager](ctx)
+	ep.network = networkManager
 	wgEndpoint, err := wireguard.NewEndpoint(wireguard.EndpointOptions{
 		Context:         ctx,
 		Logger:          logger,
@@ -146,7 +152,6 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 			Logger:           logger,
 			InterfaceFinder:  networkManager.InterfaceFinder(),
 			InterfaceMonitor: networkManager.InterfaceMonitor(),
-			ExcludeInterface: options.Name,
 			IsExempt: func() bool {
 				return networkManager.AutoRedirectOutputMark() != 0
 			},
@@ -198,7 +203,7 @@ func (w *Endpoint) OnDemand() bool {
 	return w.onDemand
 }
 
-func (w *Endpoint) Start(stage adapter.StartStage) error {
+func (w *Endpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	// lx: SPEC 070 — serialise Start against Close. The daemon releases its
 	// service lock while instance.Start() runs (so a stop can interrupt a slow
 	// start), which makes Box.Close legal at ANY point during Box.Start. Close
@@ -216,6 +221,12 @@ func (w *Endpoint) Start(stage adapter.StartStage) error {
 		return os.ErrClosed
 	}
 	switch stage {
+	case adapter.StartStateInitialize:
+		err := w.endpoint.Initialize(oomkiller.MemoryPressure(w.ctx))
+		if err != nil {
+			return err
+		}
+		scope.Add(w.Close)
 	case adapter.StartStateStart:
 		if err := w.endpoint.Start(false); err != nil {
 			return err
@@ -302,7 +313,7 @@ func (w *Endpoint) SuspendIfIdle(reachable bool, threshold time.Duration, reacha
 	// so the dial clock alone would suspend an endpoint mid-transfer and blackhole
 	// the connection. Two live-traffic gates, both off the hot path (suspend
 	// candidates only):
-	// 1. Established TCP flows in the device's gVisor stack — precise and immune
+	// 1. Managed TCP connections in the userspace stack — conservative and immune
 	//    to WireGuard keepalive/rekey noise. No activity stamp: the moment the
 	//    last flow closes, the endpoint is idle again.
 	if w.endpoint.ActiveTCPFlows() > 0 {
@@ -340,7 +351,7 @@ func (w *Endpoint) SleepSince() time.Duration {
 
 // TeardownIfSlept is the idle tick's level-3 decision (SPEC 020): an endpoint
 // that has been ASLEEP longer than threshold is torn down completely — device
-// Closed, gVisor netstack (~5.9 MB) freed — leaving only its config. The next
+// Closed, userspace stack freed — leaving only its config. The next
 // dial rebuilds it (~0.5-1 s) instead of the ~1 RTT a merely-suspended endpoint
 // pays; that trade is the whole point of the level.
 //
@@ -468,6 +479,10 @@ func (w *Endpoint) Close() error {
 	return w.endpoint.Close()
 }
 
+func (w *Endpoint) MultiplexEnabled() bool {
+	return true
+}
+
 func (w *Endpoint) InterfaceUpdated(ctx context.Context) {
 	if !w.started.Load() {
 		return
@@ -499,6 +514,10 @@ func (w *Endpoint) PortMTU() uint32 {
 	return w.endpoint.PortMTU()
 }
 
+func (w *Endpoint) UpstreamPort() any {
+	return w.endpoint
+}
+
 func (w *Endpoint) AttachReturn(returnPath tun.Return) error {
 	return w.endpoint.AttachReturn(returnPath)
 }
@@ -510,10 +529,13 @@ func (w *Endpoint) DetachReturn(returnPath tun.Return) error {
 func (w *Endpoint) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
 	for _, localPrefix := range w.localAddresses {
 		if localPrefix.Contains(destination.Addr()) {
-			return tun.FlowVerdict{Action: tun.ActionAccept}
+			if w.system {
+				return tun.FlowVerdict{Action: tun.ActionAccept}
+			}
+			return adapter.JudgeHostFlow(w.ctx, w.network, w.logger, network, source, destination)
 		}
 	}
-	return adapter.JudgeFlow(w.router, w.Tag(), w.Type(), network, source, destination, firstPacket)
+	return adapter.JudgeFlow(w.router, adapter.InboundContext{Inbound: w.Tag(), InboundType: w.Type()}, network, source, destination, firstPacket)
 }
 
 func (w *Endpoint) NewDNSPacket(payload []byte, source M.Socksaddr, destination M.Socksaddr, writer N.PacketWriter) {

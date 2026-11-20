@@ -18,6 +18,7 @@ import (
 	"github.com/sagernet/sing-box/common/urltest"
 	C "github.com/sagernet/sing-box/constant"
 	dnsgroup "github.com/sagernet/sing-box/dns/transport/group"
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/protocol/group"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -92,7 +93,7 @@ func (s *StartedService) URLTestOutbound(ctx context.Context, request *URLTestOu
 
 	delay, err := urltest.URLTest(testCtx, request.Link, detour)
 
-	realTag := group.RealTag(boxService.outboundManager, realTagSource)
+	realTag := group.RealTag(realTagSource, N.NetworkTCP)
 	if err != nil {
 		boxService.urlTestHistoryStorage.DeleteURLTestHistory(realTag)
 		return &URLTestOutboundResponse{Error: err.Error()}, nil
@@ -207,7 +208,11 @@ func (s *StartedService) GetURLViaOutbound(ctx context.Context, request *GetURLV
 		if err != nil {
 			return &GetURLViaOutboundResponse{Error: E.Cause(err, "initialize certificate store").Error()}, nil
 		}
-		defer store.Close()
+		storeScope := adapter.NewScope(httpRequest.Context(), log.NewNOPFactory().Logger())
+		defer storeScope.Close()
+		if err := store.Start(adapter.StartStateInitialize, storeScope); err != nil {
+			return &GetURLViaOutboundResponse{Error: E.Cause(err, "initialize certificate store").Error()}, nil
+		}
 		transport.TLSClientConfig = &tls.Config{RootCAs: store.Pool()}
 	}
 	defer transport.CloseIdleConnections()
@@ -326,7 +331,7 @@ func (s *StartedService) GetOutbounds(ctx context.Context, empty *emptypb.Empty)
 	var list OutboundList
 	appendItem := func(detour adapter.Outbound) {
 		item := &GroupItem{Tag: detour.Tag(), Type: detour.Type()}
-		if history := historyStorage.LoadURLTestHistory(group.RealTag(boxService.outboundManager, detour)); history != nil {
+		if history := historyStorage.LoadURLTestHistory(group.RealTag(detour, N.NetworkTCP)); history != nil {
 			item.UrlTestTime = history.Time.Unix()
 			item.UrlTestDelay = int32(history.Delay)
 		}
@@ -590,7 +595,13 @@ func resolveOutboundChain(tags []string, outboundManager adapter.OutboundManager
 			continue
 		}
 		if group, isGroup := detour.(adapter.OutboundGroup); isGroup {
-			if now := group.Now(); now != "" {
+			var now string
+			if display, available := group.(interface{ Now() string }); available {
+				now = display.Now()
+			} else if selected := group.Selected(N.NetworkTCP); selected != nil {
+				now = selected.Tag()
+			}
+			if now != "" {
 				chain = append(chain, now)
 			}
 		}

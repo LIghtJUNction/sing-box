@@ -56,7 +56,7 @@ func testRequest(t *testing.T) *http.Request {
 func TestBreakerTripsAndEvicts(t *testing.T) {
 	manager, conns := poolOf(t, xmuxConfig{maxConcurrency: intRange{4, 4}})
 	client, _ := manager.get()
-	for i := int32(0); i < xmuxBreakerThreshold; i++ {
+	for range xmuxBreakerThreshold {
 		if cause := client.evictCause(); cause != "" {
 			t.Fatalf("evictCause before threshold = %q", cause)
 		}
@@ -99,7 +99,7 @@ func TestBreakerSuccessResetsStreak(t *testing.T) {
 func TestBackoffDoublesAndCaps(t *testing.T) {
 	manager, _ := poolOf(t, xmuxConfig{})
 	want := xmuxBackoffInitial
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		manager.noteBreakerTrip()
 		manager.access.Lock()
 		got := manager.backoffDelay
@@ -234,7 +234,7 @@ func TestUplinkBodyGetBody(t *testing.T) {
 	if request.GetBody == nil {
 		t.Fatal("GetBody not set on body-placement upload")
 	}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		body, err := request.GetBody()
 		if err != nil {
 			t.Fatal(err)

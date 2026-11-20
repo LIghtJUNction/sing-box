@@ -1,10 +1,11 @@
 package trafficcontrol
 
-// groupTagForNetwork preserves protocol-specific selection for groups such as
-// URLTest. This is a routing-time snapshot, not post-dial telemetry.
-func groupTagForNetwork(group interface{ Now() string }, network string) string {
-	if networkGroup, ok := group.(interface{ NowForNetwork(string) string }); ok {
-		return networkGroup.NowForNetwork(network)
+import "github.com/sagernet/sing-box/adapter"
+
+// groupTagForNetwork resolves a transport detour through that network's choice.
+func groupTagForNetwork(group interface{ Selected(string) adapter.Outbound }, network string) string {
+	if selected := group.Selected(network); selected != nil {
+		return selected.Tag()
 	}
-	return group.Now()
+	return ""
 }

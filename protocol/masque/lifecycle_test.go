@@ -4,6 +4,9 @@ import (
 	"context"
 	"sync"
 	"testing"
+
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/log"
 )
 
 // newBareSession builds a session with no real device/ipConn/closer — enough to
@@ -57,12 +60,10 @@ func TestTeardownIdempotent(t *testing.T) {
 	o.sess = s
 
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 8 {
+		wg.Go(func() {
 			o.teardownSession(s)
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -81,5 +82,22 @@ func TestClosePreventsNewSession(t *testing.T) {
 	_ = o.Close()
 	if _, err := o.ensureSession(context.Background()); err == nil {
 		t.Fatal("ensureSession must fail after Close")
+	}
+}
+
+func TestScopeClosesOutboundSession(t *testing.T) {
+	t.Parallel()
+	o := &Outbound{}
+	s := newBareSession()
+	o.sess = s
+	scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())
+	if err := o.Start(adapter.StartStateInitialize, scope); err != nil {
+		t.Fatal(err)
+	}
+	if err := scope.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !o.closed || o.sess != nil || s.ctx.Err() == nil {
+		t.Fatal("scope cleanup must close the outbound and its active session")
 	}
 }

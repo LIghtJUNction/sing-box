@@ -67,7 +67,6 @@ type RecorderOptions struct {
 type ReportStatus struct {
 	StartedAt      time.Time
 	RecordedAt     time.Time
-	EndedAt        time.Time
 	MemoryLimit    uint64
 	PeakMemory     uint64
 	MinAvailable   uint64
@@ -90,7 +89,6 @@ type Recorder struct {
 	closed           bool
 	draftCreated     bool
 	draftLock        *os.File
-	notable          bool
 	reloading        bool
 	carriedState     *timerState
 	status           ReportStatus
@@ -132,7 +130,6 @@ type eventRecord struct {
 	MemoryLimit      uint64        `json:"memoryLimit,omitempty"`
 	TriggerBytes     uint64        `json:"triggerBytes,omitempty"`
 	ArmedBytes       uint64        `json:"armedBytes,omitempty"`
-	ResumeBytes      uint64        `json:"resumeBytes,omitempty"`
 	ReportOnly       bool          `json:"reportOnly,omitempty"`
 	Connections      int           `json:"connections,omitempty"`
 	Sequence         int           `json:"seq,omitempty"`
@@ -206,16 +203,8 @@ func (r *Recorder) Close() error {
 	if !r.draftCreated {
 		return nil
 	}
-	if !r.notable {
-		r.releaseDraftLocked()
-		return os.RemoveAll(r.draftPath)
-	}
-	r.status.EndedAt = time.Now()
-	r.writeLogLocked()
-	r.writeMetadataLocked()
 	r.releaseDraftLocked()
-	promoteDirectory(r.draftPath, filepath.Join(r.basePath, ReportsDirectoryName), r.status.EndedAt.UTC())
-	return nil
+	return os.RemoveAll(r.draftPath)
 }
 
 func (r *Recorder) releaseDraftLocked() {
@@ -298,7 +287,6 @@ func (r *Recorder) instanceStarted(config timerConfig, thresholds pressureThresh
 		MemoryLimit:  config.memoryLimit,
 		TriggerBytes: thresholds.trigger,
 		ArmedBytes:   thresholds.armed,
-		ResumeBytes:  thresholds.resume,
 		ReportOnly:   config.killerDisabled,
 	})
 	return carriedState
@@ -368,7 +356,6 @@ func (r *Recorder) sample(sample memorySample, state pressureState, connections 
 func (r *Recorder) recordPressure(sample memorySample) {
 	r.access.Lock()
 	defer r.access.Unlock()
-	r.notable = true
 	r.observeLocked(sample)
 	r.denseUntil = time.Now().Add(denseSampleWindow)
 	r.appendEventLocked(eventRecord{Type: eventTypePressure, MemoryBytes: sample.usage, AvailableBytes: sample.available})
@@ -385,7 +372,6 @@ func (r *Recorder) recordStateChange(state pressureState, sample memorySample) {
 func (r *Recorder) recordReset(reason string, before memorySample, after memorySample, connections int, reportOnly bool) {
 	r.access.Lock()
 	defer r.access.Unlock()
-	r.notable = true
 	r.observeLocked(before)
 	r.denseUntil = time.Now().Add(denseSampleWindow)
 	r.appendEventLocked(eventRecord{
@@ -465,7 +451,6 @@ func (r *Recorder) snapshot(reason string, sample memorySample, heapDump bool, f
 	}
 	r.access.Lock()
 	defer r.access.Unlock()
-	r.notable = true
 	r.status.Snapshots = sequence
 	r.observeLocked(sample)
 	r.writeLogLocked()

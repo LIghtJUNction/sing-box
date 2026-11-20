@@ -5,6 +5,7 @@ package lxd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -57,6 +58,9 @@ func TestStorePendingLifecycle(t *testing.T) {
 }
 
 func TestReadOptionalDistinguishesErrorFromAbsence(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not enforce Unix chmod permission bits")
+	}
 	dir := t.TempDir()
 
 	// Absent file is the normal "no value" answer, not an error.

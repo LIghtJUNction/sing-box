@@ -28,6 +28,12 @@ type URLTestOutboundOptions struct {
 	// the cost is staler delay numbers in the UI. Default false (upstream
 	// probing behaviour).
 	PassiveCheck bool `json:"passive_check,omitempty"`
+	// lx:begin urltest-lazy-start
+	// SPEC 019 — defer this group's startup/reset tests until it carries traffic.
+	// An active parent URL-test group may still probe its nested dependencies.
+	// Manual URL tests remain forced; false preserves upstream startup behaviour.
+	LazyStart bool `json:"lazy_start,omitempty"`
+	// lx:end urltest-lazy-start
 }
 
 // URLTestBalancerOptions configures round_robin: a fixed-size pool of live nodes, lazily

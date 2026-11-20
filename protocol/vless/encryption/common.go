@@ -16,13 +16,14 @@ import (
 	"time"
 
 	E "github.com/sagernet/sing/common/exceptions"
+
 	"golang.org/x/crypto/chacha20poly1305"
 	"lukechampine.com/blake3"
 )
 
 var OutBytesPool = sync.Pool{
 	New: func() any {
-		return make([]byte, 5+8192+16)
+		return new([5 + 8192 + 16]byte)
 	},
 }
 
@@ -55,8 +56,9 @@ func (c *CommonConn) Write(b []byte) (int, error) {
 	if len(b) == 0 {
 		return 0, nil
 	}
-	outBytes := OutBytesPool.Get().([]byte)
-	defer OutBytesPool.Put(outBytes)
+	buffer := OutBytesPool.Get().(*[5 + 8192 + 16]byte)
+	defer OutBytesPool.Put(buffer)
+	outBytes := buffer[:]
 	for n := 0; n < len(b); {
 		b := b[n:]
 		if len(b) > 8192 {

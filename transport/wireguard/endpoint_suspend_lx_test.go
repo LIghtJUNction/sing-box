@@ -39,3 +39,16 @@ func TestTransferTotalsNilDevice(t *testing.T) {
 }
 
 // lx:end idle-suspend
+
+// On-demand idling is a separate policy from the protocol/AWG guard. Neither a
+// selector wake nor a dial may clear a deliberately held-down endpoint.
+func TestOnDemandWakePreservesProtocolSuspension(t *testing.T) {
+	e := &Endpoint{}
+	e.Suspend()
+	e.SetIdle(true)
+	e.SetIdle(false)
+	e.resume()
+	if !e.suspended.Load() {
+		t.Fatal("on-demand wake must preserve protocol suspension")
+	}
+}
