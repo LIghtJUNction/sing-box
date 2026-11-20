@@ -126,6 +126,22 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 	} else {
 		remoteConn, err = this.DialContext(ctx, N.NetworkTCP, metadata.Destination)
 	}
+	if err != nil && !metadata.Destination.IsIP() &&
+		metadata.RouteOriginalDestination.IsValid() && metadata.RouteOriginalDestination != metadata.Destination {
+		// Retry the original destination with the same network selection policy.
+		// Resolved addresses belong to the overridden domain and must not be reused.
+		var fallbackErr error
+		if metadata.RouteOriginalDestination.IsIP() {
+			remoteConn, fallbackErr = dialer.DialSerialNetwork(ctx, this, N.NetworkTCP, metadata.RouteOriginalDestination, nil, metadata.NetworkStrategy, metadata.NetworkType, metadata.FallbackNetworkType, metadata.FallbackDelay)
+		} else {
+			remoteConn, fallbackErr = this.DialContext(ctx, N.NetworkTCP, metadata.RouteOriginalDestination)
+		}
+		if fallbackErr == nil {
+			err = nil
+		} else {
+			err = E.Errors(err, E.Cause(fallbackErr, "fallback to ", metadata.RouteOriginalDestination))
+		}
+	}
 	if err != nil {
 		var remoteString string
 		if len(metadata.DestinationAddresses) > 0 {
